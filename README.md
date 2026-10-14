@@ -1,40 +1,53 @@
 # Freedom Finances Desktop
 
-Aplicativo desktop local e offline para finanças pessoais. A interface é React + TypeScript e o núcleo nativo é Tauri 2 + Rust + SQLite. Não existe API HTTP, login, Docker, VPS, Caddy, domínio ou sincronização remota: a interface chama comandos Rust com `invoke` e o Rust acessa o SQLite diretamente.
+Freedom Finances Desktop is an open source, local-first, offline desktop application for personal finance management.
 
-## O que já funciona
+It is built with **React**, **TypeScript**, **Tauri 2**, **Rust**, and **SQLite**. There is no HTTP API, login system, Docker dependency, VPS, Caddy, domain, or remote synchronization. The interface calls native Rust commands through `invoke`, and Rust accesses SQLite directly.
 
-- Dashboard mensal com receitas, despesas, saldo, valores em aberto/pagos, faturas e gastos por categoria.
-- CRUD de lançamentos, alteração de status e filtros por mês/status.
-- CRUD e ativação/desativação de categorias, cartões e contas.
-- Faturas mensais criadas automaticamente para lançamentos no cartão.
-- Declaração manual de faturas preexistentes, mesmo sem lançamentos cadastrados.
-- Mês fiscal padrão persistido localmente para o Dashboard e novos formulários.
-- Saldo projetado sem duplicar compras individuais já incluídas nas faturas.
-- Receitas e contas fixas com modelo recorrente, ocorrência mensal e lançamento vinculado.
-- Cartões e faturas agrupados pelo mês fiscal selecionado, incluindo faturas declaradas sem lançamentos.
-- Compra parcelada com divisão exata dos centavos e faturas futuras.
-- Fechar, pagar, reabrir e cancelar fatura.
-- Pagamento de fatura marca seus lançamentos abertos como pagos.
-- Backup manual consistente pela API de backup do SQLite, validado com `PRAGMA integrity_check`.
-- Build Linux em AppImage.
+## About
 
-## Dados locais
+Freedom Finances Desktop is an open source project created and maintained by **Gabriel Balduino**.
 
-O aplicativo cria os diretórios na primeira execução:
+For contact, suggestions, or contributions:
+
+**Email:** gabrielbalduino@proton.me
+
+## What already works
+
+- Monthly dashboard with income, expenses, balances, open/paid values, invoices, and category totals.
+- Transaction CRUD, status changes, and filters by fiscal month/status.
+- CRUD and activation/deactivation of categories, credit cards, and accounts.
+- Monthly credit card invoices automatically created from card transactions.
+- Manual declaration of pre-existing invoices, even without registered transactions.
+- Locally persisted default fiscal month for the Dashboard and new forms.
+- Projected balance without duplicating individual card purchases already included in invoices.
+- Fixed income and recurring bills with recurring models, monthly occurrences, and linked transactions.
+- Credit cards and invoices grouped by the selected fiscal month, including declared invoices without transactions.
+- Installment purchases with exact cent distribution and future invoices.
+- Invoice close, pay, reopen, and cancel actions.
+- Paying an invoice marks its open linked transactions as paid.
+- Safe deletion flows for recurring items, recurring occurrences, and installment purchases.
+- Projected, realized, and accumulated cash flow.
+- Manual SQLite backup validated with `PRAGMA integrity_check`.
+- Modern dark interface with icons.
+- Linux AppImage build.
+
+## Local data
+
+The application creates the required directories on first run:
 
 ```text
-Banco:   ~/.local/share/freedom-finances/freedom_finances.db
-Backups: ~/Backups/freedom-finances/
+Database: ~/.local/share/freedom-finances/freedom_finances.db
+Backups:  ~/Backups/freedom-finances/
 ```
 
-O banco fica fora do código-fonte. Apagar, mover ou atualizar o projeto não apaga seus dados.
+The database is stored outside the source code directory. Deleting, moving, or updating the project does not delete your financial data.
 
-Na primeira execução são criados apenas uma conta `Carteira` e as categorias Salário, Mercado, Transporte, Alimentação, Internet, Assinaturas, Saúde, Casa, Lazer e Outros. Nenhum lançamento ou cartão fictício é criado.
+On the first run, the app creates only one default account, `Wallet`, and a default set of categories such as Salary, Groceries, Transportation, Food, Internet, Subscriptions, Health, Home, Leisure, and Others. No fake transactions or fake credit cards are created.
 
-## Preparação no Omarchy/Arch Linux
+## Preparation on Omarchy / Arch Linux
 
-Instale as dependências de desenvolvimento do Tauri:
+Install the Tauri development dependencies:
 
 ```bash
 sudo pacman -Syu
@@ -42,22 +55,23 @@ sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl \
   appmenu-gtk-module libappindicator-gtk3 librsvg xdotool
 ```
 
-Instale o Rust, caso `cargo --version` ainda não funcione:
+Install Rust if `cargo --version` does not work yet:
 
 ```bash
 curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh
 source "$HOME/.cargo/env"
 ```
 
-Também é necessário Node.js com npm. Omarchy normalmente já oferece os dois; confirme com:
+Node.js and npm are also required. Omarchy usually provides both, but you can confirm with:
 
 ```bash
 node --version
 npm --version
 rustc --version
+cargo --version
 ```
 
-## Desenvolvimento
+## Development
 
 ```bash
 cd ~/Projetos/freedom-finances-desktop
@@ -65,74 +79,99 @@ npm install
 npm run tauri dev
 ```
 
-O comando abre a janela desktop. O Vite usado durante desenvolvimento serve os arquivos da interface apenas em loopback enquanto o processo está aberto. O aplicativo compilado não inicia servidor HTTP e não expõe porta.
+This command opens the desktop window. During development, Vite serves the interface locally while the process is running. The compiled application does not start an HTTP server and does not expose a port.
 
-## Build e execução
+## Build and run
 
 ```bash
 npm run tauri build
 ```
 
-O AppImage é gerado em:
+The AppImage is generated at:
 
 ```text
 src-tauri/target/release/bundle/appimage/Freedom Finances_0.1.0_amd64.AppImage
 ```
 
-Execute diretamente:
+Run it directly:
 
 ```bash
 chmod +x "src-tauri/target/release/bundle/appimage/Freedom Finances_0.1.0_amd64.AppImage"
 "src-tauri/target/release/bundle/appimage/Freedom Finances_0.1.0_amd64.AppImage"
 ```
 
-## Como as faturas funcionam
+## How invoices work
 
-Ao salvar um lançamento com cartão, o núcleo procura uma fatura do cartão para o mês fiscal. Se ela não existir, cria automaticamente:
-
-```text
-fechamento = mês fiscal + dia de fechamento
-vencimento = mês seguinte + dia de vencimento
-status inicial = open
-```
-
-Dias que não existem no mês são ajustados para o último dia válido. O total da fatura é calculado exclusivamente em centavos inteiros:
+When saving a transaction with a credit card, the native core searches for an invoice for that card and fiscal month. If it does not exist, it is created automatically:
 
 ```text
-total = saldo declarado + lançamentos vinculados não cancelados
+closing date = fiscal month + card closing day
+due date     = following month + card due day
+initial status = open
 ```
 
-O saldo declarado permite registrar uma fatura que já existia antes do início do uso do app. Na tela **Cartões e faturas**, use **Declarar fatura em aberto** e informe cartão, mês fiscal, valor, vencimento, fechamento opcional, status e observação. Se a fatura do mesmo cartão e mês já existir, a declaração a atualiza sem apagar seus lançamentos.
+Invalid dates are adjusted to the last valid day of the month.
 
-Bancos criados por versões anteriores recebem as colunas de declaração por uma migração aditiva e idempotente durante a inicialização.
-
-## Mês fiscal padrão e projeção
-
-No Dashboard, escolha o mês desejado e use **Definir como padrão**. A preferência é salva na tabela `settings` com a chave `default_fiscal_month`; quando ela não existe, o aplicativo usa o mês atual do sistema. O valor também é mostrado em **Configurações** e sugerido ao criar lançamentos, receitas, compras parceladas e faturas declaradas.
-
-O saldo projetado evita contar compras de cartão duas vezes:
+Invoice totals are calculated using integer cents only:
 
 ```text
-saldo projetado = receitas do mês
-                 - despesas diretas do mês
-                 - total das faturas com vencimento no mês
+total = declared invoice amount + non-cancelled linked transactions
 ```
 
-Faturas abertas, fechadas e pagas entram pela data de vencimento. Faturas canceladas e lançamentos cancelados não entram no cálculo.
+The declared amount allows you to register an invoice that already existed before you started using the app.
 
-## Fixos mensais
+In **Credit Cards and Invoices**, use **Declare open invoice** and provide the card, fiscal month, amount, due date, optional closing date, status, and notes. If an invoice for the same card and fiscal month already exists, the declaration updates it without deleting its linked transactions.
 
-A aba **Fixos** separa o modelo recorrente de cada ocorrência mensal. Cadastre salário, água, internet, DAS ou outra receita/despesa com valor padrão, conta, categoria, dia previsto e intervalo de validade. Em seguida, selecione o mês e use **Gerar fixos do mês**.
+Databases created by previous versions receive the declaration columns through an additive and idempotent migration during startup.
 
-A geração é idempotente: executar novamente para o mesmo mês não duplica ocorrências nem lançamentos. Cada ocorrência cria uma transação normal sem cartão, por isso entra automaticamente nas receitas, despesas diretas e no saldo projetado. Editar o valor de um mês atualiza a ocorrência e sua transação, mas preserva o valor padrão dos meses futuros. Pagar, receber, cancelar ou reabrir também sincroniza o status da transação.
+## Default fiscal month and projection
 
-As tabelas `recurring_items` e `recurring_occurrences` são criadas de forma aditiva com `CREATE TABLE IF NOT EXISTS`, preservando bancos existentes.
+On the Dashboard, select the desired month and use **Set as default**. The preference is saved in the `settings` table using the `default_fiscal_month` key. If the setting does not exist, the application uses the current system month.
 
-## Cartões por mês fiscal
+The selected value is also shown in **Settings** and suggested when creating transactions, income, installment purchases, and declared invoices.
 
-A tela **Cartões e faturas** possui seu próprio seletor integrado ao mês selecionado no aplicativo. A fatura atual corresponde ao `fiscal_month` escolhido e pode estar aberta, fechada ou paga. A seção de faturas abertas inclui todos os registros `open` e `closed`, ordenados pelo vencimento, inclusive faturas declaradas sem transações. Faturas canceladas não são exibidas.
+The projected balance avoids counting card purchases twice:
 
-Uma compra de `10000` centavos em três parcelas gera:
+```text
+projected balance = monthly income
+                  - monthly direct expenses
+                  - invoices due in the month
+```
+
+Open, closed, and paid invoices are included based on their due date. Cancelled invoices and cancelled transactions are excluded.
+
+## Monthly recurring items
+
+The **Recurring** page separates the recurring model from each monthly occurrence.
+
+You can register salary, water bills, internet bills, taxes, subscriptions, or any other recurring income/expense with a default amount, account, category, expected day, and validity interval.
+
+Each generated occurrence creates a normal non-card transaction. Because of that, recurring items automatically affect income, direct expenses, projected values, realized values, and accumulated balances.
+
+Generation is idempotent: running it again for the same month does not duplicate occurrences or transactions.
+
+Editing the value of a month updates the occurrence and its linked transaction, while preserving the default amount for future months. Paying, receiving, cancelling, or reopening an occurrence also synchronizes the linked transaction status.
+
+The `recurring_items` and `recurring_occurrences` tables are created additively with `CREATE TABLE IF NOT EXISTS`, preserving existing databases.
+
+## Recurring item deletion and ending
+
+Recurring items support different actions depending on the intended result:
+
+- **Remove this month**: removes only one monthly occurrence.
+- **End from this month**: keeps previous history and prevents future generation.
+- **Delete if no history exists**: physically deletes only clean recurring models.
+- **Delete recurring item and history**: destructive action that removes the recurring model, its occurrences, and linked transactions.
+
+The destructive action requires explicit confirmation by typing the recurring item name.
+
+## Credit cards by fiscal month
+
+The **Credit Cards and Invoices** page has its own month selector integrated with the app's selected fiscal month.
+
+The current invoice corresponds to the selected `fiscal_month` and may be open, closed, or paid. The open invoices section includes all `open` and `closed` records ordered by due date, including manually declared invoices without transactions. Cancelled invoices are hidden.
+
+An installment purchase of `10000` cents in three installments generates:
 
 ```text
 3334
@@ -140,43 +179,111 @@ Uma compra de `10000` centavos em três parcelas gera:
 3333
 ```
 
-Cada parcela recebe o mesmo UUID de grupo, sua numeração, o mês fiscal subsequente e a fatura correspondente. Ao pagar uma fatura, o app grava `paid_at` e muda para `paid` todas as transações `open` daquela fatura.
+Each installment receives the same group UUID, its installment number, the following fiscal month, and the corresponding invoice.
+
+When an invoice is paid, the app records `paid_at` and changes all `open` transactions linked to that invoice to `paid`.
+
+## Installment purchase deletion
+
+When deleting an installment transaction, the app asks which scope should be removed:
+
+- only this installment
+- this and the following installments
+- the entire installment purchase
+
+This prevents future installments from remaining as orphaned charges after deleting a test or incorrect installment purchase.
 
 ## Backup
 
-Abra **Configurações → Criar backup agora**. O destino segue o padrão:
+Open **Settings → Create backup now**.
+
+The destination follows this pattern:
 
 ```text
 ~/Backups/freedom-finances/freedom_finances_YYYY-MM-DD_HH-MM-SS.db
 ```
 
-O app usa uma cópia consistente mesmo com o banco em uso e só informa sucesso depois de receber `ok` do `PRAGMA integrity_check`. Os botões da mesma tela abrem as pastas do banco e dos backups no gerenciador de arquivos.
+The app creates a consistent copy even while the database is in use and only reports success after receiving `ok` from `PRAGMA integrity_check`.
 
-## Testes
+The same Settings page also provides buttons to open the database and backup folders in the file manager.
+
+## Tests
 
 ```bash
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Os testes Rust cobrem datas e agrupamento de faturas, virada de ano, divisão de centavos, migração de banco antigo, faturas declaradas, dashboard/projeção, fixos mensais, sincronização entre ocorrência e transação, geração idempotente, pagamento e o fluxo integrado de compra em 3x com backup íntegro.
+Rust tests cover:
 
-## Estrutura
+- date handling
+- invoice grouping
+- year transitions
+- cent distribution
+- legacy database migration
+- declared invoices
+- dashboard and projection
+- recurring items
+- recurring occurrence and transaction synchronization
+- idempotent generation
+- payment flows
+- installment deletion scopes
+- integrated three-installment purchase flow
+- backup integrity
+
+## Project structure
 
 ```text
-src/                    React, telas, componentes e chamadas invoke
-src-tauri/src/db.rs     caminhos, conexão e seed local
-src-tauri/src/schema.rs schema SQLite
-src-tauri/src/*.rs      regras e comandos nativos por domínio
+src/                    React screens, components, and invoke calls
+src-tauri/src/db.rs     local paths, SQLite connection, and local seed
+src-tauri/src/schema.rs SQLite schema
+src-tauri/src/*.rs      native commands and domain rules
 ```
 
-## Limitações atuais
+## Current limitations
 
-- Não há importação ou sincronização com a versão antiga/VPS.
-- Transferências ainda são tratadas como um lançamento único; a contrapartida automática entre duas contas fica para uma próxima versão.
-- Não há recorrências, anexos, exportação CSV/OFX, conciliação bancária ou atualização automática.
-- O projeto gera AppImage; empacotamento AUR/PKGBUILD pode ser adicionado depois.
+- There is no import or synchronization with the old web/VPS version.
+- Transfers are still handled as a single transaction; automatic counterpart entries between accounts are planned for a future version.
+- There is no CSV/OFX import yet.
+- There are no attachments, automatic bank reconciliation, or auto-updates yet.
+- The project currently builds an AppImage; AUR/PKGBUILD packaging may be added later.
 
-## Privacidade
+## Privacy
 
-O aplicativo não faz chamadas de rede em produção. Fontes, ícones da interface e código necessários são empacotados localmente. Faça backups periódicos: não existe nuvem para recuperar um banco perdido.
+The production application does not make network calls. The required interface assets, icons, and code are bundled locally.
+
+All financial data remains on the user's machine.
+
+Create periodic backups. There is no cloud recovery if the local database is lost.
+
+## Repository hygiene
+
+The following files should not be committed:
+
+- local SQLite databases
+- backups
+- AppImage builds
+- Tauri target directory
+- Node modules
+- environment files
+- temporary files
+
+## Roadmap
+
+Possible future improvements:
+
+- CSV import for bank statements and credit card invoices
+- OFX import
+- automatic category rules based on transaction descriptions
+- CSV export
+- charts and monthly reports
+- multi-account balance projection
+- release automation with GitHub Actions
+- AUR package
+- optional migration from previous versions
+
+## License
+
+This project is licensed under the MIT License.
+
+See the `LICENSE` file for details.
