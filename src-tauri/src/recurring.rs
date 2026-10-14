@@ -213,6 +213,28 @@ pub fn set_recurring_item_active(
     get_item_db(&connection, id)
 }
 
+#[tauri::command]
+pub fn deactivate_recurring_item(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<RecurringItemDto, String> {
+    deactivate_recurring_item_db(&state.db, id)
+}
+
+pub fn deactivate_recurring_item_db(db: &Database, id: i64) -> Result<RecurringItemDto, String> {
+    let connection = db.open().map_err(|e| e.to_string())?;
+    let changed = connection
+        .execute(
+            "UPDATE recurring_items SET active=0, updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+            [id],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("Fixo não encontrado.".into());
+    }
+    get_item_db(&connection, id)
+}
+
 fn days_in_month(year: i32, month: u32) -> u32 {
     let (next_year, next_month) = if month == 12 {
         (year + 1, 1)
@@ -612,6 +634,33 @@ mod tests {
     }
 
     #[test]
+    fn item_without_end_month_generates_in_each_loaded_month() {
+        let fixture = fixture();
+        create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+
+        for fiscal_month in ["2026-11", "2026-12", "2027-01"] {
+            let rows =
+                ensure_recurring_occurrences_for_month_db(&fixture.db, fiscal_month).unwrap();
+            assert_eq!(rows.len(), 1, "deveria gerar em {fiscal_month}");
+            assert_eq!(rows[0].amount_cents, 300_000);
+        }
+
+        let connection = fixture.db.open().unwrap();
+        let occurrence_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM recurring_occurrences", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let transaction_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(occurrence_count, 3);
+        assert_eq!(transaction_count, 3);
+        drop(connection);
+        cleanup(fixture);
+    }
+
+    #[test]
     fn rejects_end_month_before_start_month() {
         let fixture = fixture();
         let mut invalid = input(&fixture, "income");
@@ -620,6 +669,60 @@ mod tests {
         let error = create_recurring_item_db(&fixture.db, invalid).unwrap_err();
 
         assert_eq!(error, "O mês final não pode ser anterior ao mês inicial.");
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn deactivating_item_sets_active_to_false() {
+        let fixture = fixture();
+        let item = create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+
+        let deactivated = deactivate_recurring_item_db(&fixture.db, item.id).unwrap();
+
+        assert!(!deactivated.active);
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn deactivated_item_does_not_generate_new_occurrences() {
+        let fixture = fixture();
+        let item = create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+        deactivate_recurring_item_db(&fixture.db, item.id).unwrap();
+
+        let rows = ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-12").unwrap();
+
+        assert!(rows.is_empty());
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn deactivating_item_preserves_existing_occurrence_and_transaction() {
+        let fixture = fixture();
+        let item = create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+        let occurrence = ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-11")
+            .unwrap()
+            .remove(0);
+
+        deactivate_recurring_item_db(&fixture.db, item.id).unwrap();
+
+        let connection = fixture.db.open().unwrap();
+        let occurrence_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM recurring_occurrences WHERE id=?1)",
+                [occurrence.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let transaction_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM transactions WHERE id=?1)",
+                [occurrence.transaction_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(occurrence_exists);
+        assert!(transaction_exists);
+        drop(connection);
         cleanup(fixture);
     }
 

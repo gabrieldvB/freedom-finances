@@ -3,7 +3,8 @@ use tauri::State;
 
 use crate::{
     commands::{validate_month, CategoryTotalDto, DashboardDto},
-    invoices, settings, transactions, AppState,
+    db::Database,
+    invoices, recurring, settings, transactions, AppState,
 };
 
 #[tauri::command]
@@ -11,28 +12,31 @@ pub fn get_dashboard(
     state: State<'_, AppState>,
     fiscal_month: Option<String>,
 ) -> Result<DashboardDto, String> {
-    let connection = state.db.open().map_err(|e| e.to_string())?;
-    build_dashboard_for_month(&connection, fiscal_month.as_deref())
+    get_dashboard_db(&state.db, fiscal_month.as_deref())
+}
+
+pub(crate) fn get_dashboard_db(
+    db: &Database,
+    fiscal_month: Option<&str>,
+) -> Result<DashboardDto, String> {
+    let connection = db.open().map_err(|e| e.to_string())?;
+    let resolved_month = match fiscal_month {
+        Some(value) => {
+            validate_month(value)?;
+            value.to_string()
+        }
+        None => settings::get_default_fiscal_month_db(&connection)?,
+    };
+    drop(connection);
+
+    recurring::ensure_recurring_occurrences_for_month_db(db, &resolved_month)?;
+    build_dashboard(&db.open().map_err(|e| e.to_string())?, &resolved_month)
 }
 
 fn sum(connection: &Connection, sql: &str, fiscal_month: &str) -> Result<i64, String> {
     connection
         .query_row(sql, [fiscal_month], |row| row.get(0))
         .map_err(|e| e.to_string())
-}
-
-pub(crate) fn build_dashboard_for_month(
-    connection: &Connection,
-    fiscal_month: Option<&str>,
-) -> Result<DashboardDto, String> {
-    let resolved_month = match fiscal_month {
-        Some(value) => {
-            validate_month(value)?;
-            value.to_string()
-        }
-        None => settings::get_default_fiscal_month_db(connection)?,
-    };
-    build_dashboard(connection, &resolved_month)
 }
 
 fn sum_card_invoices_due_in_month(
@@ -148,7 +152,11 @@ pub(crate) fn build_dashboard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{commands::DeclaredInvoiceInput, db::Database, settings};
+    use crate::{
+        commands::{DeclaredInvoiceInput, RecurringItemInput},
+        db::Database,
+        recurring, settings,
+    };
     use uuid::Uuid;
 
     fn database() -> (std::path::PathBuf, Database, i64, i64) {
@@ -244,9 +252,55 @@ mod tests {
         let (root, db, _, _) = database();
         let connection = db.open().unwrap();
         settings::set_default_fiscal_month_db(&connection, "2026-11").unwrap();
-        let dashboard = build_dashboard_for_month(&connection, None).unwrap();
-        assert_eq!(dashboard.fiscal_month, "2026-11");
         drop(connection);
+        let dashboard = get_dashboard_db(&db, None).unwrap();
+        assert_eq!(dashboard.fiscal_month, "2026-11");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn dashboard_generates_fixed_income_for_each_selected_month() {
+        let (root, db, account_id, _) = database();
+        let income_category_id = db
+            .open()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM categories WHERE type='income' LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        recurring::create_recurring_item_db(
+            &db,
+            RecurringItemInput {
+                name: "Salário".into(),
+                item_type: "income".into(),
+                category_id: Some(income_category_id),
+                account_id,
+                default_amount_cents: 300_000,
+                due_day: 5,
+                start_month: "2026-11".into(),
+                end_month: None,
+                active: true,
+                notes: None,
+            },
+        )
+        .unwrap();
+
+        for fiscal_month in ["2026-11", "2026-12", "2027-01"] {
+            let dashboard = get_dashboard_db(&db, Some(fiscal_month)).unwrap();
+            assert_eq!(
+                dashboard.projected_income_cents, 300_000,
+                "dashboard deveria incluir o salário em {fiscal_month}"
+            );
+        }
+
+        let transaction_count: i64 = db
+            .open()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(transaction_count, 3);
         std::fs::remove_dir_all(root).unwrap();
     }
 

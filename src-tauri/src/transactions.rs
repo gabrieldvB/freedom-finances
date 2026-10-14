@@ -7,7 +7,7 @@ use crate::{
     commands::{validate_date, validate_month, InstallmentInput, TransactionDto, TransactionInput},
     db::Database,
     invoices::find_or_create_invoice,
-    AppState,
+    recurring, AppState,
 };
 
 const TRANSACTION_SELECT: &str = r#"
@@ -109,6 +109,7 @@ pub fn list_transactions(
     state: State<'_, AppState>,
     fiscal_month: String,
 ) -> Result<Vec<TransactionDto>, String> {
+    recurring::ensure_recurring_occurrences_for_month_db(&state.db, &fiscal_month)?;
     list_transactions_db(&state.db.open().map_err(|e| e.to_string())?, &fiscal_month)
 }
 
