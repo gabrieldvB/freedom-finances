@@ -190,6 +190,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(row, (7, "preservar".into(), 0, None, None));
+        let recurring_tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('recurring_items','recurring_occurrences')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(recurring_tables, 2);
+        connection.execute_batch(SCHEMA).unwrap();
         drop(connection);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -8,7 +8,11 @@ import type {
   DeclaredInvoiceInput,
   InstallmentInput,
   Invoice,
+  InvoiceGroups,
   InvoiceStatus,
+  RecurringItem,
+  RecurringItemInput,
+  RecurringOccurrence,
   Transaction,
   TransactionInput,
   TransactionStatus,
@@ -61,6 +65,8 @@ export const api = {
 
   listInvoices: (creditCardId?: number) =>
     invoke<Invoice[]>("list_invoices", { creditCardId: creditCardId ?? null }),
+  getInvoiceGroups: (fiscalMonth?: string) =>
+    invoke<InvoiceGroups>("get_invoice_groups", { fiscalMonth: fiscalMonth ?? null }),
   createDeclaredInvoice: (input: DeclaredInvoiceInput) =>
     invoke<Invoice>("create_declared_invoice", { input }),
   updateInvoiceDeclaredAmount: (
@@ -77,6 +83,22 @@ export const api = {
     invoke<Transaction[]>("get_invoice_transactions", { id }),
   setInvoiceStatus: (id: number, status: InvoiceStatus) =>
     invoke<Invoice>("set_invoice_status", { id, status }),
+
+  listRecurringItems: () => invoke<RecurringItem[]>("list_recurring_items"),
+  saveRecurringItem: (item: RecurringItemInput & { id?: number }) =>
+    invoke<RecurringItem>(item.id ? "update_recurring_item" : "create_recurring_item", item.id
+      ? { id: item.id, input: item }
+      : { input: item }),
+  setRecurringItemActive: (id: number, active: boolean) =>
+    invoke<RecurringItem>("set_recurring_item_active", { id, active }),
+  listRecurringOccurrences: (fiscalMonth: string) =>
+    invoke<RecurringOccurrence[]>("list_recurring_occurrences", { fiscalMonth }),
+  ensureRecurringOccurrences: (fiscalMonth: string) =>
+    invoke<RecurringOccurrence[]>("ensure_recurring_occurrences_for_month", { fiscalMonth }),
+  updateRecurringOccurrence: (id: number, amountCents: number, notes: string | null) =>
+    invoke<RecurringOccurrence>("update_recurring_occurrence", { id, amountCents, notes }),
+  setRecurringOccurrenceStatus: (id: number, status: TransactionStatus) =>
+    invoke<RecurringOccurrence>("set_recurring_occurrence_status", { id, status }),
 
   getPaths: () => invoke<AppPaths>("get_app_paths"),
   backup: () => invoke<string>("create_backup"),

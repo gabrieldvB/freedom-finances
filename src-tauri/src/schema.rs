@@ -78,7 +78,39 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS recurring_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('income','expense')),
+    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+    default_amount_cents INTEGER NOT NULL CHECK(default_amount_cents > 0),
+    due_day INTEGER NOT NULL CHECK(due_day BETWEEN 1 AND 31),
+    start_month TEXT NOT NULL,
+    end_month TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS recurring_occurrences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recurring_item_id INTEGER NOT NULL REFERENCES recurring_items(id) ON DELETE RESTRICT,
+    transaction_id INTEGER NOT NULL UNIQUE REFERENCES transactions(id) ON DELETE RESTRICT,
+    fiscal_month TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
+    due_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','paid','cancelled')),
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(recurring_item_id, fiscal_month)
+);
+
 CREATE INDEX IF NOT EXISTS idx_transactions_fiscal_month ON transactions(fiscal_month);
 CREATE INDEX IF NOT EXISTS idx_transactions_invoice ON transactions(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_card_month ON credit_card_invoices(credit_card_id, fiscal_month);
+CREATE INDEX IF NOT EXISTS idx_recurring_items_active_months ON recurring_items(active, start_month, end_month);
+CREATE INDEX IF NOT EXISTS idx_recurring_occurrences_month ON recurring_occurrences(fiscal_month);
 "#;

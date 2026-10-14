@@ -3,9 +3,9 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use tauri::State;
 
 use crate::{
-    commands::{validate_date, validate_month, DeclaredInvoiceInput, InvoiceDto},
+    commands::{validate_date, validate_month, DeclaredInvoiceInput, InvoiceDto, InvoiceGroupsDto},
     db::Database,
-    transactions, AppState,
+    settings, transactions, AppState,
 };
 
 fn days_in_month(year: i32, month: u32) -> u32 {
@@ -253,6 +253,55 @@ pub fn list_invoices_db(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn get_invoice_groups(
+    state: State<'_, AppState>,
+    fiscal_month: Option<String>,
+) -> Result<InvoiceGroupsDto, String> {
+    get_invoice_groups_db(
+        &state.db.open().map_err(|e| e.to_string())?,
+        fiscal_month.as_deref(),
+    )
+}
+
+pub fn get_invoice_groups_db(
+    connection: &Connection,
+    fiscal_month: Option<&str>,
+) -> Result<InvoiceGroupsDto, String> {
+    let fiscal_month = match fiscal_month {
+        Some(value) => {
+            validate_month(value)?;
+            value.to_string()
+        }
+        None => settings::get_default_fiscal_month_db(connection)?,
+    };
+    let invoices = list_invoices_db(connection, None)?;
+    let current_invoices = invoices
+        .iter()
+        .filter(|invoice| {
+            invoice.fiscal_month == fiscal_month && invoice.status.as_str() != "cancelled"
+        })
+        .cloned()
+        .collect();
+    let mut open_invoices: Vec<_> = invoices
+        .iter()
+        .filter(|invoice| ["open", "closed"].contains(&invoice.status.as_str()))
+        .cloned()
+        .collect();
+    open_invoices.sort_by(|left, right| left.due_date.cmp(&right.due_date));
+    let mut history_invoices: Vec<_> = invoices
+        .into_iter()
+        .filter(|invoice| invoice.status == "paid" && invoice.fiscal_month != fiscal_month)
+        .collect();
+    history_invoices.sort_by(|left, right| right.due_date.cmp(&left.due_date));
+    Ok(InvoiceGroupsDto {
+        fiscal_month,
+        current_invoices,
+        open_invoices,
+        history_invoices,
+    })
+}
+
 pub fn get_invoice_db(connection: &Connection, id: i64) -> Result<InvoiceDto, String> {
     let sql = format!("{INVOICE_SELECT} WHERE i.id=?1 GROUP BY i.id");
     connection
@@ -434,6 +483,110 @@ mod tests {
             rows.iter().map(|invoice| invoice.total_cents).sum::<i64>(),
             186_309
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_invoice_without_transactions_is_current_for_selected_month() {
+        let (root, db, card_id) = database_with_card();
+        let invoice = create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        let groups = get_invoice_groups_db(&db.open().unwrap(), Some("2026-11")).unwrap();
+        assert_eq!(groups.current_invoices.len(), 1);
+        assert_eq!(groups.current_invoices[0].id, invoice.id);
+        assert_eq!(groups.current_invoices[0].transaction_count, 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_open_invoice_appears_in_open_group() {
+        let (root, db, card_id) = database_with_card();
+        let invoice = create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        let groups = get_invoice_groups_db(&db.open().unwrap(), Some("2026-11")).unwrap();
+        assert!(groups.open_invoices.iter().any(|row| row.id == invoice.id));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn paid_invoice_is_current_but_not_open() {
+        let (root, db, card_id) = database_with_card();
+        let invoice = create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        set_invoice_status_db(&db, invoice.id, "paid").unwrap();
+        let groups = get_invoice_groups_db(&db.open().unwrap(), Some("2026-11")).unwrap();
+        assert!(groups
+            .current_invoices
+            .iter()
+            .any(|row| row.id == invoice.id));
+        assert!(!groups.open_invoices.iter().any(|row| row.id == invoice.id));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_invoice_does_not_appear_in_groups() {
+        let (root, db, card_id) = database_with_card();
+        let invoice = create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        set_invoice_status_db(&db, invoice.id, "cancelled").unwrap();
+        let groups = get_invoice_groups_db(&db.open().unwrap(), Some("2026-11")).unwrap();
+        assert!(groups.current_invoices.is_empty());
+        assert!(groups.open_invoices.is_empty());
+        assert!(groups.history_invoices.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invoice_groups_use_default_fiscal_month_when_omitted() {
+        let (root, db, card_id) = database_with_card();
+        crate::settings::set_default_fiscal_month_db(&db.open().unwrap(), "2026-11").unwrap();
+        let invoice = create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        let groups = get_invoice_groups_db(&db.open().unwrap(), None).unwrap();
+        assert_eq!(groups.fiscal_month, "2026-11");
+        assert_eq!(groups.current_invoices[0].id, invoice.id);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn december_invoice_is_not_current_in_november() {
+        let (root, db, card_id) = database_with_card();
+        create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-12", 54_586, "2026-12-15"),
+        )
+        .unwrap();
+        let groups = get_invoice_groups_db(&db.open().unwrap(), Some("2026-11")).unwrap();
+        assert!(groups.current_invoices.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn november_invoice_is_current_in_november() {
+        let (root, db, card_id) = database_with_card();
+        create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        let groups = get_invoice_groups_db(&db.open().unwrap(), Some("2026-11")).unwrap();
+        assert_eq!(groups.current_invoices.len(), 1);
+        assert_eq!(groups.current_invoices[0].fiscal_month, "2026-11");
         std::fs::remove_dir_all(root).unwrap();
     }
 }

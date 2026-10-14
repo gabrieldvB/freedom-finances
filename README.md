@@ -11,6 +11,8 @@ Aplicativo desktop local e offline para finanças pessoais. A interface é React
 - Declaração manual de faturas preexistentes, mesmo sem lançamentos cadastrados.
 - Mês fiscal padrão persistido localmente para o Dashboard e novos formulários.
 - Saldo projetado sem duplicar compras individuais já incluídas nas faturas.
+- Receitas e contas fixas com modelo recorrente, ocorrência mensal e lançamento vinculado.
+- Cartões e faturas agrupados pelo mês fiscal selecionado, incluindo faturas declaradas sem lançamentos.
 - Compra parcelada com divisão exata dos centavos e faturas futuras.
 - Fechar, pagar, reabrir e cancelar fatura.
 - Pagamento de fatura marca seus lançamentos abertos como pagos.
@@ -118,6 +120,18 @@ saldo projetado = receitas do mês
 
 Faturas abertas, fechadas e pagas entram pela data de vencimento. Faturas canceladas e lançamentos cancelados não entram no cálculo.
 
+## Fixos mensais
+
+A aba **Fixos** separa o modelo recorrente de cada ocorrência mensal. Cadastre salário, água, internet, DAS ou outra receita/despesa com valor padrão, conta, categoria, dia previsto e intervalo de validade. Em seguida, selecione o mês e use **Gerar fixos do mês**.
+
+A geração é idempotente: executar novamente para o mesmo mês não duplica ocorrências nem lançamentos. Cada ocorrência cria uma transação normal sem cartão, por isso entra automaticamente nas receitas, despesas diretas e no saldo projetado. Editar o valor de um mês atualiza a ocorrência e sua transação, mas preserva o valor padrão dos meses futuros. Pagar, receber, cancelar ou reabrir também sincroniza o status da transação.
+
+As tabelas `recurring_items` e `recurring_occurrences` são criadas de forma aditiva com `CREATE TABLE IF NOT EXISTS`, preservando bancos existentes.
+
+## Cartões por mês fiscal
+
+A tela **Cartões e faturas** possui seu próprio seletor integrado ao mês selecionado no aplicativo. A fatura atual corresponde ao `fiscal_month` escolhido e pode estar aberta, fechada ou paga. A seção de faturas abertas inclui todos os registros `open` e `closed`, ordenados pelo vencimento, inclusive faturas declaradas sem transações. Faturas canceladas não são exibidas.
+
 Uma compra de `10000` centavos em três parcelas gera:
 
 ```text
@@ -145,7 +159,7 @@ npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Os testes Rust cobrem datas de fatura, virada de ano, divisão de centavos, migração de banco antigo, faturas declaradas sem lançamentos, soma entre saldo declarado e lançamentos, dashboard/projeção, pagamento e o fluxo integrado de compra em 3x com backup íntegro.
+Os testes Rust cobrem datas e agrupamento de faturas, virada de ano, divisão de centavos, migração de banco antigo, faturas declaradas, dashboard/projeção, fixos mensais, sincronização entre ocorrência e transação, geração idempotente, pagamento e o fluxo integrado de compra em 3x com backup íntegro.
 
 ## Estrutura
 

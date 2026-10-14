@@ -78,6 +78,61 @@ export interface DeclaredInvoiceInput {
   declaredNote: string | null;
 }
 
+export interface InvoiceGroups {
+  fiscalMonth: string;
+  currentInvoices: Invoice[];
+  openInvoices: Invoice[];
+  historyInvoices: Invoice[];
+}
+
+export type RecurringType = "income" | "expense";
+
+export interface RecurringItem {
+  id: number;
+  name: string;
+  type: RecurringType;
+  categoryId: number | null;
+  categoryName: string | null;
+  accountId: number;
+  accountName: string;
+  defaultAmountCents: number;
+  dueDay: number;
+  startMonth: string;
+  endMonth: string | null;
+  active: boolean;
+  notes: string | null;
+}
+
+export interface RecurringItemInput {
+  name: string;
+  type: RecurringType;
+  categoryId: number | null;
+  accountId: number;
+  defaultAmountCents: number;
+  dueDay: number;
+  startMonth: string;
+  endMonth: string | null;
+  active: boolean;
+  notes: string | null;
+}
+
+export interface RecurringOccurrence {
+  id: number;
+  recurringItemId: number;
+  recurringItem: string;
+  type: RecurringType;
+  categoryId: number | null;
+  categoryName: string | null;
+  accountId: number;
+  accountName: string;
+  transactionId: number;
+  fiscalMonth: string;
+  amountCents: number;
+  dueDate: string;
+  status: TransactionStatus;
+  notes: string | null;
+}
+
 export interface CategoryTotal {
   category: string;
   color: string;

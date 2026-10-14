@@ -1,19 +1,21 @@
 import { useEffect, useState } from "react";
-import { CreditCard, LayoutDashboard, ListChecks, Settings as SettingsIcon, Shapes, WalletCards } from "lucide-react";
+import { CreditCard, LayoutDashboard, ListChecks, Repeat2, Settings as SettingsIcon, Shapes, WalletCards } from "lucide-react";
 import { currentFiscalMonth } from "./lib/dates";
 import Dashboard from "./pages/Dashboard";
 import Transactions from "./pages/Transactions";
 import Cards from "./pages/Cards";
 import Categories from "./pages/Categories";
 import Settings from "./pages/Settings";
+import Recurring from "./pages/Recurring";
 import { Spinner } from "./components/Ui";
 import { api } from "./lib/api";
 
-export type Page = "dashboard" | "transactions" | "cards" | "categories" | "settings";
+export type Page = "dashboard" | "transactions" | "recurring" | "cards" | "categories" | "settings";
 
 const navigation = [
   { id: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
   { id: "transactions" as const, label: "Lançamentos", icon: ListChecks },
+  { id: "recurring" as const, label: "Fixos", icon: Repeat2 },
   { id: "cards" as const, label: "Cartões e faturas", icon: WalletCards },
   { id: "categories" as const, label: "Categorias", icon: Shapes },
   { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
@@ -31,9 +33,6 @@ export default function App() {
   }, []);
 
   function navigate(nextPage: Page) {
-    if (defaultFiscalMonth && (nextPage === "dashboard" || nextPage === "transactions")) {
-      setFiscalMonth(defaultFiscalMonth);
-    }
     setPage(nextPage);
   }
 
@@ -57,7 +56,8 @@ export default function App() {
         {!fiscalMonth || !defaultFiscalMonth ? <Spinner /> : <>
           {page === "dashboard" && <Dashboard fiscalMonth={fiscalMonth} defaultFiscalMonth={defaultFiscalMonth} onMonthChange={setFiscalMonth} onDefaultMonthChange={setDefaultFiscalMonth} onNavigate={navigate} />}
           {page === "transactions" && <Transactions fiscalMonth={fiscalMonth} defaultFiscalMonth={defaultFiscalMonth} onMonthChange={setFiscalMonth} />}
-          {page === "cards" && <Cards defaultFiscalMonth={defaultFiscalMonth} />}
+          {page === "recurring" && <Recurring fiscalMonth={fiscalMonth} defaultFiscalMonth={defaultFiscalMonth} onMonthChange={setFiscalMonth} onOpenTransactions={() => navigate("transactions")} />}
+          {page === "cards" && <Cards fiscalMonth={fiscalMonth} defaultFiscalMonth={defaultFiscalMonth} onMonthChange={setFiscalMonth} />}
           {page === "categories" && <Categories />}
           {page === "settings" && <Settings defaultFiscalMonth={defaultFiscalMonth} />}
         </>}

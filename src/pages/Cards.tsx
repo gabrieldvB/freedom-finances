@@ -1,26 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CreditCard as CardIcon, FilePlus2, Pencil, Plus, Power } from "lucide-react";
 import { Modal, Notice, PageHeader, Spinner, StatusBadge } from "../components/Ui";
+import { MonthPicker } from "../components/MonthPicker";
 import { api, errorMessage } from "../lib/api";
-import { currentFiscalMonth, formatDate, formatMonth } from "../lib/dates";
+import { formatDate, formatMonth } from "../lib/dates";
 import { formatMoney, moneyInput, parseMoney } from "../lib/money";
-import type { CreditCard, Invoice, InvoiceStatus } from "../types";
+import type { CreditCard, Invoice, InvoiceGroups, InvoiceStatus } from "../types";
 import InvoiceDetail from "./InvoiceDetail";
 
-export default function Cards({ defaultFiscalMonth }: { defaultFiscalMonth: string }) {
-  const [cards, setCards] = useState<CreditCard[]>([]); const [invoices, setInvoices] = useState<Invoice[]>([]);
+export default function Cards({ fiscalMonth, defaultFiscalMonth, onMonthChange }: { fiscalMonth: string; defaultFiscalMonth: string; onMonthChange: (value: string) => void }) {
+  const [cards, setCards] = useState<CreditCard[]>([]); const [groups, setGroups] = useState<InvoiceGroups | null>(null);
   const [editing, setEditing] = useState<CreditCard | "new" | null>(null); const [selectedInvoice, setSelectedInvoice] = useState<number | null>(null);
   const [declaring, setDeclaring] = useState(false);
   const [loading, setLoading] = useState(true); const [error, setError] = useState("");
-  const load = useCallback(async () => { setLoading(true); setError(""); try { const [cardRows, invoiceRows] = await Promise.all([api.listCards(), api.listInvoices()]); setCards(cardRows); setInvoices(invoiceRows); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); } }, []);
+  const load = useCallback(async () => { setLoading(true); setError(""); try { const [cardRows, invoiceGroups] = await Promise.all([api.listCards(), api.getInvoiceGroups(fiscalMonth)]); setCards(cardRows); setGroups(invoiceGroups); } catch (err) { setError(errorMessage(err)); } finally { setLoading(false); } }, [fiscalMonth]);
   useEffect(() => { void load(); }, [load]);
 
   async function toggle(card: CreditCard) { try { await api.setCardActive(card.id, !card.active); await load(); } catch (err) { setError(errorMessage(err)); } }
   return <>
-    <PageHeader title="Cartões e faturas" subtitle="Acompanhe o presente e os próximos meses." actions={<><button className="secondary" disabled={!cards.some((card) => card.active)} onClick={() => setDeclaring(true)}><FilePlus2 size={17} /> Declarar fatura em aberto</button><button className="primary" onClick={() => setEditing("new")}><Plus size={17} /> Novo cartão</button></>} />
+    <PageHeader title="Cartões e faturas" subtitle="Acompanhe o presente e os próximos meses." actions={<><MonthPicker value={fiscalMonth} onChange={onMonthChange} /><button className="secondary" disabled={!cards.some((card) => card.active)} onClick={() => setDeclaring(true)}><FilePlus2 size={17} /> Declarar fatura em aberto</button><button className="primary" onClick={() => setEditing("new")}><Plus size={17} /> Novo cartão</button></>} />
     {error && <Notice type="error">{error}</Notice>}
     {loading ? <Spinner /> : cards.length === 0 ? <section className="panel empty-state">Cadastre seu primeiro cartão para gerar faturas automaticamente.</section> : <div className="cards-stack">
-      {cards.map((card) => <CardSection key={card.id} card={card} invoices={invoices.filter((row) => row.creditCardId === card.id)} onEdit={() => setEditing(card)} onToggle={() => void toggle(card)} onInvoice={setSelectedInvoice} />)}
+      {cards.map((card) => <CardSection key={card.id} card={card} currentInvoices={(groups?.currentInvoices ?? []).filter((row) => row.creditCardId === card.id)} openInvoices={(groups?.openInvoices ?? []).filter((row) => row.creditCardId === card.id)} historyInvoices={(groups?.historyInvoices ?? []).filter((row) => row.creditCardId === card.id)} onEdit={() => setEditing(card)} onToggle={() => void toggle(card)} onInvoice={setSelectedInvoice} />)}
     </div>}
     {editing && <CardForm card={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
     {declaring && <DeclaredInvoiceForm cards={cards.filter((card) => card.active)} defaultFiscalMonth={defaultFiscalMonth} onClose={() => setDeclaring(false)} onSaved={async (invoice) => { setDeclaring(false); await load(); setSelectedInvoice(invoice.id); }} />}
@@ -28,24 +29,16 @@ export default function Cards({ defaultFiscalMonth }: { defaultFiscalMonth: stri
   </>;
 }
 
-function CardSection({ card, invoices, onEdit, onToggle, onInvoice }: { card: CreditCard; invoices: Invoice[]; onEdit: () => void; onToggle: () => void; onInvoice: (id: number) => void }) {
-  const current = currentFiscalMonth();
-  const groups = useMemo(() => ({
-    current: invoices.filter((row) => row.fiscalMonth === current),
-    open: invoices.filter((row) => row.fiscalMonth < current && ["open", "closed"].includes(row.status)),
-    future: invoices.filter((row) => row.fiscalMonth > current && row.status !== "cancelled"),
-    history: invoices.filter((row) => ["paid", "cancelled"].includes(row.status)),
-  }), [invoices, current]);
+function CardSection({ card, currentInvoices, openInvoices, historyInvoices, onEdit, onToggle, onInvoice }: { card: CreditCard; currentInvoices: Invoice[]; openInvoices: Invoice[]; historyInvoices: Invoice[]; onEdit: () => void; onToggle: () => void; onInvoice: (id: number) => void }) {
   return <section className={`panel card-section ${!card.active ? "inactive" : ""}`}>
     <div className="card-heading">
       <div className="credit-card-visual"><CardIcon size={25} /><span>{card.name}</span><small>Fecha dia {card.closingDay} · vence dia {card.dueDay}</small><strong>Limite {formatMoney(card.limitCents)}</strong></div>
       <div className="row-actions"><button className="icon-button" title="Editar" onClick={onEdit}><Pencil size={17} /></button><button className="icon-button" title={card.active ? "Desativar" : "Ativar"} onClick={onToggle}><Power size={17} /></button></div>
     </div>
     <div className="invoice-groups">
-      <InvoiceGroup title="Fatura atual" rows={groups.current} onOpen={onInvoice} />
-      <InvoiceGroup title="Faturas abertas" rows={groups.open} onOpen={onInvoice} />
-      <InvoiceGroup title="Próximas faturas" rows={groups.future} onOpen={onInvoice} />
-      <InvoiceGroup title="Histórico" rows={groups.history} onOpen={onInvoice} />
+      <InvoiceGroup title="Fatura atual" rows={currentInvoices} onOpen={onInvoice} />
+      <InvoiceGroup title="Faturas abertas" rows={openInvoices} onOpen={onInvoice} />
+      <InvoiceGroup title="Histórico" rows={historyInvoices} onOpen={onInvoice} />
     </div>
   </section>;
 }

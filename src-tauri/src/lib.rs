@@ -5,6 +5,7 @@ mod commands;
 mod dashboard;
 mod db;
 mod invoices;
+mod recurring;
 mod schema;
 mod settings;
 mod transactions;
@@ -44,11 +45,20 @@ pub fn run() {
             cards::update_card,
             cards::set_card_active,
             invoices::list_invoices,
+            invoices::get_invoice_groups,
             invoices::get_invoice,
             invoices::get_invoice_transactions,
             invoices::create_declared_invoice,
             invoices::update_invoice_declared_amount,
             invoices::set_invoice_status,
+            recurring::list_recurring_items,
+            recurring::create_recurring_item,
+            recurring::update_recurring_item,
+            recurring::set_recurring_item_active,
+            recurring::list_recurring_occurrences,
+            recurring::ensure_recurring_occurrences_for_month,
+            recurring::update_recurring_occurrence,
+            recurring::set_recurring_occurrence_status,
             settings::get_setting,
             settings::set_setting,
             settings::get_default_fiscal_month,

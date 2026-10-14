@@ -129,6 +129,70 @@ pub struct InvoiceDto {
     pub transaction_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvoiceGroupsDto {
+    pub fiscal_month: String,
+    pub current_invoices: Vec<InvoiceDto>,
+    pub open_invoices: Vec<InvoiceDto>,
+    pub history_invoices: Vec<InvoiceDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurringItemDto {
+    pub id: i64,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub category_id: Option<i64>,
+    pub category_name: Option<String>,
+    pub account_id: i64,
+    pub account_name: String,
+    pub default_amount_cents: i64,
+    pub due_day: u32,
+    pub start_month: String,
+    pub end_month: Option<String>,
+    pub active: bool,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurringItemInput {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub category_id: Option<i64>,
+    pub account_id: i64,
+    pub default_amount_cents: i64,
+    pub due_day: u32,
+    pub start_month: String,
+    pub end_month: Option<String>,
+    pub active: bool,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurringOccurrenceDto {
+    pub id: i64,
+    pub recurring_item_id: i64,
+    pub recurring_item: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub category_id: Option<i64>,
+    pub category_name: Option<String>,
+    pub account_id: i64,
+    pub account_name: String,
+    pub transaction_id: i64,
+    pub fiscal_month: String,
+    pub amount_cents: i64,
+    pub due_date: String,
+    pub status: String,
+    pub notes: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeclaredInvoiceInput {
