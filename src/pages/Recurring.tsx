@@ -7,6 +7,8 @@ import { formatDate, formatMonth } from "../lib/dates";
 import { formatMoney, moneyInput, parseMoney } from "../lib/money";
 import type { Account, Category, RecurringItem, RecurringItemInput, RecurringOccurrence, RecurringType, TransactionStatus } from "../types";
 
+const FISCAL_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
 export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChange, onOpenTransactions }: { fiscalMonth: string; defaultFiscalMonth: string; onMonthChange: (value: string) => void; onOpenTransactions: () => void }) {
   const [items, setItems] = useState<RecurringItem[]>([]);
   const [occurrences, setOccurrences] = useState<RecurringOccurrence[]>([]);
@@ -106,6 +108,10 @@ function RecurringItemForm({ item, defaultFiscalMonth, accounts, categories, onC
     if (cents === null || cents <= 0) return setError("Informe um valor padrão maior que zero.");
     if (!accountId) return setError("Selecione uma conta.");
     if (dueDay < 1 || dueDay > 31) return setError("O dia previsto deve ficar entre 1 e 31.");
+    if (!startMonth) return setError("Informe o mês inicial.");
+    if (!FISCAL_MONTH_PATTERN.test(startMonth)) return setError("Mês inicial inválido; use AAAA-MM.");
+    if (endMonth && !FISCAL_MONTH_PATTERN.test(endMonth)) return setError("Mês final inválido; use AAAA-MM.");
+    if (endMonth && endMonth < startMonth) return setError("O mês final não pode ser anterior ao mês inicial.");
     const input: RecurringItemInput & { id?: number } = { id: item?.id, name: name.trim(), type, categoryId: categoryId ? Number(categoryId) : null, accountId: Number(accountId), defaultAmountCents: cents, dueDay, startMonth, endMonth: endMonth || null, active, notes: notes.trim() || null };
     setSaving(true); setError("");
     try { await api.saveRecurringItem(input); await onSaved(); }
@@ -113,7 +119,7 @@ function RecurringItemForm({ item, defaultFiscalMonth, accounts, categories, onC
   }
 
   const categoryOptions = categories.filter((row) => row.type === type && (row.active || row.id === item?.categoryId));
-  return <Modal title={item ? "Editar fixo" : "Novo fixo"} onClose={onClose}><form className="form-grid" onSubmit={submit}>
+  return <Modal title={item ? "Editar fixo" : "Novo fixo"} onClose={onClose}><form className="form-grid" onSubmit={submit} noValidate>
     {error && <div className="notice notice-error full">{error}</div>}
     <label className="full">Nome<input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
     <label>Tipo<select value={type} onChange={(event) => { setType(event.target.value as RecurringType); setCategoryId(""); }}><option value="income">Receita</option><option value="expense">Despesa</option></select></label>
@@ -121,8 +127,9 @@ function RecurringItemForm({ item, defaultFiscalMonth, accounts, categories, onC
     <label>Conta<select value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="">Selecione</option>{accounts.filter((row) => row.active || row.id === item?.accountId).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
     <label>Categoria<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">Sem categoria</option>{categoryOptions.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
     <label>Dia previsto<input type="number" min="1" max="31" value={dueDay} onChange={(event) => setDueDay(Number(event.target.value))} /></label>
-    <label>Mês inicial<input type="month" value={startMonth} onChange={(event) => setStartMonth(event.target.value)} /></label>
-    <label>Mês final (opcional)<input type="month" value={endMonth} onChange={(event) => setEndMonth(event.target.value)} /></label>
+    <label>Mês inicial<input type="month" value={startMonth} onChange={(event) => setStartMonth(event.target.value)} required /></label>
+    <label>Mês final (opcional)<input type="month" min={startMonth || undefined} value={endMonth} onChange={(event) => setEndMonth(event.target.value)} /></label>
+    <p className="form-hint full">Deixe o mês final vazio para repetir indefinidamente.</p>
     <label className="checkbox-label"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /> Ativo</label>
     <label className="full">Observação<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
     <div className="form-actions full"><button type="button" className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar fixo"}</button></div>

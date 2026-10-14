@@ -553,6 +553,77 @@ mod tests {
     }
 
     #[test]
+    fn item_does_not_generate_before_start_month() {
+        let fixture = fixture();
+        create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+
+        let rows = ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-10").unwrap();
+
+        assert!(rows.is_empty());
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn item_generates_in_start_month() {
+        let fixture = fixture();
+        create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+
+        let rows = ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-11").unwrap();
+
+        assert_eq!(rows.len(), 1);
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn item_generates_in_end_month() {
+        let fixture = fixture();
+        let mut bounded = input(&fixture, "income");
+        bounded.end_month = Some("2027-07".into());
+        create_recurring_item_db(&fixture.db, bounded).unwrap();
+
+        let rows = ensure_recurring_occurrences_for_month_db(&fixture.db, "2027-07").unwrap();
+
+        assert_eq!(rows.len(), 1);
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn item_does_not_generate_after_end_month() {
+        let fixture = fixture();
+        let mut bounded = input(&fixture, "income");
+        bounded.end_month = Some("2027-07".into());
+        create_recurring_item_db(&fixture.db, bounded).unwrap();
+
+        let rows = ensure_recurring_occurrences_for_month_db(&fixture.db, "2027-08").unwrap();
+
+        assert!(rows.is_empty());
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn item_without_end_month_keeps_generating() {
+        let fixture = fixture();
+        create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+
+        let rows = ensure_recurring_occurrences_for_month_db(&fixture.db, "2035-03").unwrap();
+
+        assert_eq!(rows.len(), 1);
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn rejects_end_month_before_start_month() {
+        let fixture = fixture();
+        let mut invalid = input(&fixture, "income");
+        invalid.end_month = Some("2026-10".into());
+
+        let error = create_recurring_item_db(&fixture.db, invalid).unwrap_err();
+
+        assert_eq!(error, "O mês final não pode ser anterior ao mês inicial.");
+        cleanup(fixture);
+    }
+
+    #[test]
     fn edits_month_amount_without_changing_default() {
         let fixture = fixture();
         let item = create_recurring_item_db(&fixture.db, input(&fixture, "expense")).unwrap();
