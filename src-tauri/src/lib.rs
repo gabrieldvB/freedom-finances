@@ -5,7 +5,6 @@ mod commands;
 mod dashboard;
 mod db;
 mod invoices;
-mod monthly_balances;
 mod recurring;
 mod schema;
 mod settings;
@@ -57,17 +56,19 @@ pub fn run() {
             recurring::update_recurring_item,
             recurring::set_recurring_item_active,
             recurring::deactivate_recurring_item,
+            recurring::delete_recurring_item,
+            recurring::end_recurring_item_from_month,
             recurring::list_recurring_occurrences,
             recurring::ensure_recurring_occurrences_for_month,
             recurring::update_recurring_occurrence,
             recurring::set_recurring_occurrence_status,
             recurring::cancel_recurring_occurrence,
-            monthly_balances::get_monthly_balance,
-            monthly_balances::set_monthly_balance,
             settings::get_setting,
             settings::set_setting,
             settings::get_default_fiscal_month,
             settings::set_default_fiscal_month,
+            settings::get_initial_global_balance,
+            settings::set_initial_global_balance,
             backup::get_app_paths,
             backup::create_backup,
             backup::open_directory,

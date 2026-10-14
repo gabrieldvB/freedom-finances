@@ -10,7 +10,6 @@ import type {
   Invoice,
   InvoiceGroups,
   InvoiceStatus,
-  MonthlyBalance,
   RecurringItem,
   RecurringItemInput,
   RecurringOccurrence,
@@ -94,6 +93,10 @@ export const api = {
     invoke<RecurringItem>("set_recurring_item_active", { id, active }),
   deactivateRecurringItem: (id: number) =>
     invoke<RecurringItem>("deactivate_recurring_item", { id }),
+  deleteRecurringItem: (id: number) =>
+    invoke<void>("delete_recurring_item", { id }),
+  endRecurringItemFromMonth: (recurringItemId: number, fiscalMonth: string) =>
+    invoke<RecurringItem>("end_recurring_item_from_month", { recurringItemId, fiscalMonth }),
   listRecurringOccurrences: (fiscalMonth: string) =>
     invoke<RecurringOccurrence[]>("list_recurring_occurrences", { fiscalMonth }),
   ensureRecurringOccurrences: (fiscalMonth: string) =>
@@ -105,10 +108,9 @@ export const api = {
   cancelRecurringOccurrence: (id: number) =>
     invoke<RecurringOccurrence>("cancel_recurring_occurrence", { id }),
 
-  getMonthlyBalance: (fiscalMonth: string) =>
-    invoke<MonthlyBalance>("get_monthly_balance", { fiscalMonth }),
-  setMonthlyBalance: (fiscalMonth: string, openingBalanceCents: number, notes: string | null) =>
-    invoke<MonthlyBalance>("set_monthly_balance", { fiscalMonth, openingBalanceCents, notes }),
+  getInitialGlobalBalance: () => invoke<number>("get_initial_global_balance"),
+  setInitialGlobalBalance: (balanceCents: number) =>
+    invoke<number>("set_initial_global_balance", { balanceCents }),
 
   getPaths: () => invoke<AppPaths>("get_app_paths"),
   backup: () => invoke<string>("create_backup"),

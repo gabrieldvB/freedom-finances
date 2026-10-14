@@ -152,20 +152,18 @@ export interface DashboardData {
   openCents: number;
   paidCents: number;
   receivedCents: number;
-  openingBalanceCents: number;
-  realizedBalanceCents: number;
+  realizedIncomeCents: number;
+  realizedDirectExpensesCents: number;
+  realizedCardInvoicesCents: number;
+  realizedMonthResultCents: number;
+  initialGlobalBalanceCents: number;
   projectedAccumulatedBalanceCents: number;
+  realizedAccumulatedBalanceCents: number;
   openInvoicesTotalCents: number;
   openInvoices: Invoice[];
   upcomingInvoices: Invoice[];
   categoryTotals: CategoryTotal[];
   recentTransactions: Transaction[];
-}
-
-export interface MonthlyBalance {
-  fiscalMonth: string;
-  openingBalanceCents: number;
-  notes: string | null;
 }
 
 export interface AppPaths {

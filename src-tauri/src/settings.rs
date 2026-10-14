@@ -5,6 +5,7 @@ use tauri::State;
 use crate::{commands::validate_month, AppState};
 
 const DEFAULT_FISCAL_MONTH_KEY: &str = "default_fiscal_month";
+const INITIAL_GLOBAL_BALANCE_KEY: &str = "initial_global_balance_cents";
 
 pub fn get_setting_db(connection: &Connection, key: &str) -> Result<Option<String>, String> {
     if key.trim().is_empty() {
@@ -58,6 +59,27 @@ pub fn set_default_fiscal_month_db(
     Ok(fiscal_month.to_string())
 }
 
+pub fn get_initial_global_balance_db(connection: &Connection) -> Result<i64, String> {
+    match get_setting_db(connection, INITIAL_GLOBAL_BALANCE_KEY)? {
+        Some(value) => value
+            .parse::<i64>()
+            .map_err(|_| "O saldo inicial global salvo é inválido.".to_string()),
+        None => Ok(0),
+    }
+}
+
+pub fn set_initial_global_balance_db(
+    connection: &Connection,
+    balance_cents: i64,
+) -> Result<i64, String> {
+    set_setting_db(
+        connection,
+        INITIAL_GLOBAL_BALANCE_KEY,
+        &balance_cents.to_string(),
+    )?;
+    Ok(balance_cents)
+}
+
 #[tauri::command]
 pub fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
     get_setting_db(&state.db.open().map_err(|e| e.to_string())?, &key)
@@ -79,6 +101,19 @@ pub fn set_default_fiscal_month(
     fiscal_month: String,
 ) -> Result<String, String> {
     set_default_fiscal_month_db(&state.db.open().map_err(|e| e.to_string())?, &fiscal_month)
+}
+
+#[tauri::command]
+pub fn get_initial_global_balance(state: State<'_, AppState>) -> Result<i64, String> {
+    get_initial_global_balance_db(&state.db.open().map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub fn set_initial_global_balance(
+    state: State<'_, AppState>,
+    balance_cents: i64,
+) -> Result<i64, String> {
+    set_initial_global_balance_db(&state.db.open().map_err(|e| e.to_string())?, balance_cents)
 }
 
 #[cfg(test)]
@@ -121,6 +156,29 @@ mod tests {
         assert_eq!(
             get_default_fiscal_month_db(&reopened.open().unwrap()).unwrap(),
             "2027-01"
+        );
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn saves_and_reloads_initial_global_balance() {
+        let root =
+            std::env::temp_dir().join(format!("freedom-finances-settings-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("test.db");
+        let db = Database::at(path.clone()).unwrap();
+
+        assert_eq!(
+            set_initial_global_balance_db(&db.open().unwrap(), 147_312).unwrap(),
+            147_312
+        );
+        drop(db);
+
+        let reopened = Database::at(path).unwrap();
+        assert_eq!(
+            get_initial_global_balance_db(&reopened.open().unwrap()).unwrap(),
+            147_312
         );
         drop(reopened);
         std::fs::remove_dir_all(root).unwrap();

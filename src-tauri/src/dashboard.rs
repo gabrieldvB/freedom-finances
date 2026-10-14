@@ -4,7 +4,7 @@ use tauri::State;
 use crate::{
     commands::{validate_month, CategoryTotalDto, DashboardDto},
     db::Database,
-    invoices, monthly_balances, recurring, settings, transactions, AppState,
+    invoices, recurring, settings, transactions, AppState,
 };
 
 #[tauri::command]
@@ -29,7 +29,7 @@ pub(crate) fn get_dashboard_db(
     };
     drop(connection);
 
-    recurring::ensure_recurring_occurrences_for_month_db(db, &resolved_month)?;
+    recurring::ensure_recurring_occurrences_through_month_db(db, &resolved_month)?;
     build_dashboard(&db.open().map_err(|e| e.to_string())?, &resolved_month)
 }
 
@@ -45,12 +45,21 @@ enum InvoiceBalanceKind {
     Paid,
 }
 
+enum BalanceRange {
+    Month,
+    ThroughMonth,
+}
+
 fn sum_card_invoices_due_in_month(
     connection: &Connection,
     fiscal_month: &str,
     kind: InvoiceBalanceKind,
+    range: BalanceRange,
 ) -> Result<i64, String> {
-    let start = format!("{fiscal_month}-01");
+    let start = match range {
+        BalanceRange::Month => format!("{fiscal_month}-01"),
+        BalanceRange::ThroughMonth => "0000-01-01".to_string(),
+    };
     let end = format!("{}-01", transactions::add_months(fiscal_month, 1)?);
     let status_filter = match kind {
         InvoiceBalanceKind::Projected => "i.status IN ('open','closed','paid')",
@@ -83,8 +92,12 @@ pub(crate) fn build_dashboard(
     validate_month(fiscal_month)?;
     let projected_income_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='income' AND status!='cancelled'", fiscal_month)?;
     let projected_direct_expenses_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='expense' AND status!='cancelled' AND credit_card_id IS NULL AND invoice_id IS NULL", fiscal_month)?;
-    let projected_card_invoices_cents =
-        sum_card_invoices_due_in_month(connection, fiscal_month, InvoiceBalanceKind::Projected)?;
+    let projected_card_invoices_cents = sum_card_invoices_due_in_month(
+        connection,
+        fiscal_month,
+        InvoiceBalanceKind::Projected,
+        BalanceRange::Month,
+    )?;
     let projected_balance_cents =
         projected_income_cents - projected_direct_expenses_cents - projected_card_invoices_cents;
     let income_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='income' AND status!='cancelled'", fiscal_month)?;
@@ -92,19 +105,53 @@ pub(crate) fn build_dashboard(
     let declared_expense_cents = sum(connection, "SELECT COALESCE(SUM(declared_amount_cents),0) FROM credit_card_invoices WHERE fiscal_month=?1 AND status!='cancelled'", fiscal_month)?;
     let expense_cents = transaction_expense_cents + declared_expense_cents;
     let direct_open_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='expense' AND status='open' AND credit_card_id IS NULL AND invoice_id IS NULL", fiscal_month)?;
-    let open_invoice_cents =
-        sum_card_invoices_due_in_month(connection, fiscal_month, InvoiceBalanceKind::Open)?;
+    let open_invoice_cents = sum_card_invoices_due_in_month(
+        connection,
+        fiscal_month,
+        InvoiceBalanceKind::Open,
+        BalanceRange::Month,
+    )?;
     let open_cents = direct_open_cents + open_invoice_cents;
     let direct_paid_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='expense' AND status='paid' AND credit_card_id IS NULL AND invoice_id IS NULL", fiscal_month)?;
-    let paid_invoice_cents =
-        sum_card_invoices_due_in_month(connection, fiscal_month, InvoiceBalanceKind::Paid)?;
+    let paid_invoice_cents = sum_card_invoices_due_in_month(
+        connection,
+        fiscal_month,
+        InvoiceBalanceKind::Paid,
+        BalanceRange::Month,
+    )?;
     let paid_cents = direct_paid_cents + paid_invoice_cents;
-    let received_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='income' AND status='paid'", fiscal_month)?;
-    let opening_balance_cents =
-        monthly_balances::get_monthly_balance_db(connection, fiscal_month)?.opening_balance_cents;
-    let realized_balance_cents =
-        opening_balance_cents + received_cents - direct_paid_cents - paid_invoice_cents;
-    let projected_accumulated_balance_cents = opening_balance_cents + projected_balance_cents;
+    let realized_income_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='income' AND status='paid'", fiscal_month)?;
+    let received_cents = realized_income_cents;
+    let realized_direct_expenses_cents = direct_paid_cents;
+    let realized_card_invoices_cents = paid_invoice_cents;
+    let realized_month_result_cents =
+        realized_income_cents - realized_direct_expenses_cents - realized_card_invoices_cents;
+
+    let projected_income_through_month = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month<=?1 AND type='income' AND status!='cancelled'", fiscal_month)?;
+    let projected_direct_expenses_through_month = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month<=?1 AND type='expense' AND status!='cancelled' AND credit_card_id IS NULL AND invoice_id IS NULL", fiscal_month)?;
+    let projected_card_invoices_through_month = sum_card_invoices_due_in_month(
+        connection,
+        fiscal_month,
+        InvoiceBalanceKind::Projected,
+        BalanceRange::ThroughMonth,
+    )?;
+    let realized_income_through_month = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month<=?1 AND type='income' AND status='paid'", fiscal_month)?;
+    let realized_direct_expenses_through_month = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month<=?1 AND type='expense' AND status='paid' AND credit_card_id IS NULL AND invoice_id IS NULL", fiscal_month)?;
+    let realized_card_invoices_through_month = sum_card_invoices_due_in_month(
+        connection,
+        fiscal_month,
+        InvoiceBalanceKind::Paid,
+        BalanceRange::ThroughMonth,
+    )?;
+    let initial_global_balance_cents = settings::get_initial_global_balance_db(connection)?;
+    let projected_accumulated_balance_cents = initial_global_balance_cents
+        + projected_income_through_month
+        - projected_direct_expenses_through_month
+        - projected_card_invoices_through_month;
+    let realized_accumulated_balance_cents = initial_global_balance_cents
+        + realized_income_through_month
+        - realized_direct_expenses_through_month
+        - realized_card_invoices_through_month;
 
     let mut category_statement = connection
         .prepare(
@@ -162,9 +209,13 @@ pub(crate) fn build_dashboard(
         open_cents,
         paid_cents,
         received_cents,
-        opening_balance_cents,
-        realized_balance_cents,
+        realized_income_cents,
+        realized_direct_expenses_cents,
+        realized_card_invoices_cents,
+        realized_month_result_cents,
+        initial_global_balance_cents,
         projected_accumulated_balance_cents,
+        realized_accumulated_balance_cents,
         open_invoices_total_cents,
         open_invoices,
         upcoming_invoices,
@@ -179,7 +230,7 @@ mod tests {
     use crate::{
         commands::{DeclaredInvoiceInput, RecurringItemInput},
         db::Database,
-        monthly_balances, recurring, settings,
+        recurring, settings,
     };
     use uuid::Uuid;
 
@@ -204,13 +255,23 @@ mod tests {
         amount: i64,
         status: &str,
     ) -> crate::commands::InvoiceDto {
+        declare_invoice_for_month(db, card_id, "2026-11", amount, status)
+    }
+
+    fn declare_invoice_for_month(
+        db: &Database,
+        card_id: i64,
+        fiscal_month: &str,
+        amount: i64,
+        status: &str,
+    ) -> crate::commands::InvoiceDto {
         invoices::create_declared_invoice_db(
             db,
             DeclaredInvoiceInput {
                 credit_card_id: card_id,
-                fiscal_month: "2026-11".into(),
+                fiscal_month: fiscal_month.into(),
                 declared_amount_cents: amount,
-                due_date: "2026-11-15".into(),
+                due_date: format!("{fiscal_month}-15"),
                 closing_date: None,
                 status: status.into(),
                 declared_note: None,
@@ -220,10 +281,23 @@ mod tests {
     }
 
     fn insert_account_transaction(db: &Database, account_id: i64, kind: &str, amount: i64) {
-        db.open().unwrap().execute(
-            "INSERT INTO transactions(description, amount_cents, type, status, transaction_date, fiscal_month, account_id) VALUES ('Teste', ?1, ?2, 'open', '2026-11-05', '2026-11', ?3)",
-            (amount, kind, account_id),
+        insert_account_transaction_for_month(db, account_id, kind, amount, "open", "2026-11");
+    }
+
+    fn insert_account_transaction_for_month(
+        db: &Database,
+        account_id: i64,
+        kind: &str,
+        amount: i64,
+        status: &str,
+        fiscal_month: &str,
+    ) -> i64 {
+        let connection = db.open().unwrap();
+        connection.execute(
+            "INSERT INTO transactions(description, amount_cents, type, status, transaction_date, fiscal_month, account_id) VALUES ('Teste', ?1, ?2, ?3, ?4, ?5, ?6)",
+            (amount, kind, status, format!("{fiscal_month}-05"), fiscal_month, account_id),
         ).unwrap();
+        connection.last_insert_rowid()
     }
 
     #[test]
@@ -329,6 +403,41 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_directly_loaded_in_later_month_accumulates_prior_recurring_months() {
+        let (root, db, account_id, _) = database();
+        recurring::create_recurring_item_db(
+            &db,
+            RecurringItemInput {
+                name: "Salário".into(),
+                item_type: "income".into(),
+                category_id: None,
+                account_id,
+                default_amount_cents: 300_000,
+                due_day: 5,
+                start_month: "2026-11".into(),
+                end_month: None,
+                active: true,
+                notes: None,
+            },
+        )
+        .unwrap();
+
+        let dashboard = get_dashboard_db(&db, Some("2026-12")).unwrap();
+
+        assert_eq!(dashboard.projected_income_cents, 300_000);
+        assert_eq!(dashboard.projected_accumulated_balance_cents, 600_000);
+        let occurrence_count: i64 = db
+            .open()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM recurring_occurrences", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(occurrence_count, 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn projected_balance_uses_income_and_direct_expenses() {
         let (root, db, account_id, _) = database();
         insert_account_transaction(&db, account_id, "income", 300_000);
@@ -368,6 +477,12 @@ mod tests {
         assert_eq!(dashboard.projected_direct_expenses_cents, 40_000);
         assert_eq!(dashboard.projected_card_invoices_cents, 122_636);
         assert_eq!(dashboard.projected_balance_cents, 137_364);
+        assert_eq!(dashboard.realized_direct_expenses_cents, 0);
+
+        invoices::set_invoice_status_db(&db, invoice.id, "paid").unwrap();
+        let paid = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
+        assert_eq!(paid.realized_direct_expenses_cents, 0);
+        assert_eq!(paid.realized_card_invoices_cents, 122_636);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -383,7 +498,7 @@ mod tests {
     #[test]
     fn paying_invoice_moves_open_to_paid_without_changing_projection() {
         let (root, db, account_id, card_id) = database();
-        monthly_balances::set_monthly_balance_db(&db, "2026-11", 147_312, None).unwrap();
+        settings::set_initial_global_balance_db(&db.open().unwrap(), 147_312).unwrap();
         insert_account_transaction(&db, account_id, "income", 320_306);
         db.open()
             .unwrap()
@@ -396,11 +511,14 @@ mod tests {
 
         let before = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
         assert_eq!(before.projected_balance_cents, 147_312);
+        assert_eq!(before.projected_card_invoices_cents, 172_994);
+        assert_eq!(before.realized_card_invoices_cents, 0);
         assert_eq!(before.projected_accumulated_balance_cents, 294_624);
         assert_eq!(before.open_cents, 172_994);
         assert_eq!(before.paid_cents, 0);
         assert_eq!(before.received_cents, 320_306);
-        assert_eq!(before.realized_balance_cents, 467_618);
+        assert_eq!(before.realized_month_result_cents, 320_306);
+        assert_eq!(before.realized_accumulated_balance_cents, 467_618);
 
         invoices::set_invoice_status_db(&db, invoice.id, "paid").unwrap();
         let after = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
@@ -411,8 +529,99 @@ mod tests {
         );
         assert_eq!(after.open_cents, 0);
         assert_eq!(after.paid_cents, 172_994);
-        assert_eq!(after.realized_balance_cents, 294_624);
+        assert_eq!(after.realized_card_invoices_cents, 172_994);
+        assert_eq!(after.realized_month_result_cents, 147_312);
+        assert_eq!(after.realized_accumulated_balance_cents, 294_624);
         assert_eq!(after.projected_accumulated_balance_cents, 294_624);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn open_paid_and_cancelled_transactions_are_split_between_projected_and_realized() {
+        let (root, db, account_id, _) = database();
+        insert_account_transaction_for_month(&db, account_id, "income", 300_000, "open", "2026-11");
+        insert_account_transaction_for_month(&db, account_id, "income", 200_000, "paid", "2026-11");
+        insert_account_transaction_for_month(
+            &db,
+            account_id,
+            "income",
+            900_000,
+            "cancelled",
+            "2026-11",
+        );
+        insert_account_transaction_for_month(
+            &db, account_id, "expense", 100_000, "open", "2026-11",
+        );
+        insert_account_transaction_for_month(&db, account_id, "expense", 50_000, "paid", "2026-11");
+        insert_account_transaction_for_month(
+            &db,
+            account_id,
+            "expense",
+            800_000,
+            "cancelled",
+            "2026-11",
+        );
+
+        let dashboard = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
+
+        assert_eq!(dashboard.projected_income_cents, 500_000);
+        assert_eq!(dashboard.realized_income_cents, 200_000);
+        assert_eq!(dashboard.projected_direct_expenses_cents, 150_000);
+        assert_eq!(dashboard.realized_direct_expenses_cents, 50_000);
+        assert_eq!(dashboard.projected_balance_cents, 350_000);
+        assert_eq!(dashboard.realized_month_result_cents, 150_000);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn accumulated_balances_carry_previous_months_and_paid_income_forward() {
+        let (root, db, account_id, _) = database();
+        let income_id = insert_account_transaction_for_month(
+            &db, account_id, "income", 300_000, "open", "2026-11",
+        );
+        insert_account_transaction_for_month(&db, account_id, "expense", 10_000, "paid", "2026-11");
+
+        let before = build_dashboard(&db.open().unwrap(), "2026-12").unwrap();
+        assert_eq!(before.projected_balance_cents, 0);
+        assert_eq!(before.realized_month_result_cents, 0);
+        assert_eq!(before.projected_accumulated_balance_cents, 290_000);
+        assert_eq!(before.realized_accumulated_balance_cents, -10_000);
+
+        transactions::set_transaction_status_db(&db, income_id, "paid").unwrap();
+        let after = build_dashboard(&db.open().unwrap(), "2026-12").unwrap();
+
+        assert_eq!(after.projected_accumulated_balance_cents, 290_000);
+        assert_eq!(after.realized_accumulated_balance_cents, 290_000);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn paying_previous_month_invoice_reduces_later_realized_accumulated_balance() {
+        let (root, db, _, card_id) = database();
+        let invoice = declare_invoice_for_month(&db, card_id, "2026-11", 100_000, "open");
+
+        let before = build_dashboard(&db.open().unwrap(), "2026-12").unwrap();
+        assert_eq!(before.projected_accumulated_balance_cents, -100_000);
+        assert_eq!(before.realized_accumulated_balance_cents, 0);
+
+        invoices::set_invoice_status_db(&db, invoice.id, "paid").unwrap();
+        let after = build_dashboard(&db.open().unwrap(), "2026-12").unwrap();
+
+        assert_eq!(after.projected_accumulated_balance_cents, -100_000);
+        assert_eq!(after.realized_accumulated_balance_cents, -100_000);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn initial_global_balance_is_the_base_for_both_accumulated_balances() {
+        let (root, db, _, _) = database();
+        settings::set_initial_global_balance_db(&db.open().unwrap(), 123_456).unwrap();
+
+        let dashboard = build_dashboard(&db.open().unwrap(), "2027-01").unwrap();
+
+        assert_eq!(dashboard.initial_global_balance_cents, 123_456);
+        assert_eq!(dashboard.projected_accumulated_balance_cents, 123_456);
+        assert_eq!(dashboard.realized_accumulated_balance_cents, 123_456);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -423,6 +632,7 @@ mod tests {
         invoices::set_invoice_status_db(&db, invoice.id, "cancelled").unwrap();
         let dashboard = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
         assert_eq!(dashboard.projected_card_invoices_cents, 0);
+        assert_eq!(dashboard.realized_card_invoices_cents, 0);
         assert_eq!(dashboard.projected_balance_cents, 0);
         std::fs::remove_dir_all(root).unwrap();
     }

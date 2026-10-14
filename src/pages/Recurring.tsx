@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ExternalLink, Pencil, Plus, PowerOff, RotateCcw, WandSparkles, XCircle } from "lucide-react";
+import { CalendarOff, Check, ExternalLink, Pencil, Plus, RotateCcw, Trash2, WandSparkles, XCircle } from "lucide-react";
 import { MonthPicker } from "../components/MonthPicker";
 import { Modal, Notice, PageHeader, Spinner, StatusBadge } from "../components/Ui";
 import { api, errorMessage } from "../lib/api";
@@ -26,7 +26,7 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
       const [itemRows, occurrenceRows, accountRows, categoryRows] = await Promise.all([
         api.listRecurringItems(), api.ensureRecurringOccurrences(fiscalMonth), api.listAccounts(), api.listCategories(),
       ]);
-      setItems(itemRows.filter((row) => row.active)); setOccurrences(occurrenceRows); setAccounts(accountRows); setCategories(categoryRows);
+      setItems(itemRows); setOccurrences(occurrenceRows); setAccounts(accountRows); setCategories(categoryRows);
     } catch (err) {
       setNotice({ type: "error", text: errorMessage(err) });
     } finally {
@@ -51,9 +51,23 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
     }
   }
 
-  async function deactivate(item: RecurringItem) {
-    if (!window.confirm("Tem certeza que deseja desativar este fixo? As ocorrências e lançamentos já criados serão mantidos no histórico, mas ele não será mais gerado nos próximos meses.")) return;
-    try { await api.deactivateRecurringItem(item.id); await load(); }
+  async function endFromSelectedMonth(item: RecurringItem) {
+    if (!window.confirm(`Encerrar este fixo a partir de ${formatMonth(fiscalMonth)}? O histórico anterior será mantido. Ocorrências futuras abertas serão canceladas.`)) return;
+    try {
+      await api.endRecurringItemFromMonth(item.id, fiscalMonth);
+      setNotice({ type: "success", text: `Fixo encerrado a partir de ${formatMonth(fiscalMonth)}.` });
+      await load();
+    }
+    catch (err) { setNotice({ type: "error", text: errorMessage(err) }); }
+  }
+
+  async function removePermanently(item: RecurringItem) {
+    if (!window.confirm("Excluir definitivamente este fixo? Isso só é permitido se ele ainda não tiver histórico.")) return;
+    try {
+      await api.deleteRecurringItem(item.id);
+      setNotice({ type: "success", text: "Fixo excluído definitivamente." });
+      await load();
+    }
     catch (err) { setNotice({ type: "error", text: errorMessage(err) }); }
   }
 
@@ -77,7 +91,10 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
       </div>
       <section className="panel recurring-models">
         <div className="panel-title"><div><h2>Modelos cadastrados</h2><p>Alterar o valor padrão não modifica ocorrências já geradas.</p></div></div>
-        {items.length ? <div className="recurring-model-list">{items.map((item) => <div key={item.id}><span><strong>{item.name}</strong><small>{item.type === "income" ? "Receita" : "Despesa"} · dia {item.dueDay} · desde {formatMonth(item.startMonth)}{item.endMonth ? ` até ${formatMonth(item.endMonth)}` : ""}</small></span><strong>{formatMoney(item.defaultAmountCents)}</strong><div className="row-actions"><button className="icon-button" title="Editar modelo" onClick={() => setEditingItem(item)}><Pencil size={16} /></button><button className="icon-button danger" title="Desativar fixo" onClick={() => void deactivate(item)}><PowerOff size={16} /></button></div></div>)}</div> : <p className="muted">Nenhum fixo ativo cadastrado.</p>}
+        {items.length ? <div className="recurring-model-list">{items.map((item) => {
+          const ended = !item.active || Boolean(item.endMonth && item.endMonth < fiscalMonth);
+          return <div key={item.id} className={ended ? "inactive" : ""}><span><strong>{item.name}</strong><small>{item.type === "income" ? "Receita" : "Despesa"} · dia {item.dueDay} · desde {formatMonth(item.startMonth)}{item.endMonth ? ` até ${formatMonth(item.endMonth)}` : ""}{!item.active ? " · desativado" : ""}</small></span><strong>{formatMoney(item.defaultAmountCents)}</strong><div className="row-actions"><button className="icon-button" title="Editar modelo" onClick={() => setEditingItem(item)}><Pencil size={16} /></button><button className="ghost compact-action" disabled={ended} onClick={() => void endFromSelectedMonth(item)}><CalendarOff size={15} /> Encerrar a partir deste mês</button><button className="danger-button compact-action" onClick={() => void removePermanently(item)}><Trash2 size={15} /> Excluir definitivamente</button></div></div>;
+        })}</div> : <p className="muted">Nenhum fixo cadastrado.</p>}
       </section>
     </>}
     {editingItem && <RecurringItemForm item={editingItem === "new" ? null : editingItem} defaultFiscalMonth={defaultFiscalMonth} accounts={accounts} categories={categories} onClose={() => setEditingItem(null)} onSaved={async () => { setEditingItem(null); await load(); }} />}

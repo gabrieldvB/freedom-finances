@@ -235,6 +235,104 @@ pub fn deactivate_recurring_item_db(db: &Database, id: i64) -> Result<RecurringI
     get_item_db(&connection, id)
 }
 
+#[tauri::command]
+pub fn delete_recurring_item(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    delete_recurring_item_db(&state.db, id)
+}
+
+pub fn delete_recurring_item_db(db: &Database, id: i64) -> Result<(), String> {
+    let mut connection = db.open().map_err(|e| e.to_string())?;
+    let transaction = connection.transaction().map_err(|e| e.to_string())?;
+    let occurrence_count: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM recurring_occurrences WHERE recurring_item_id=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if occurrence_count > 0 {
+        return Err(
+            "Este fixo já possui histórico. Use Encerrar fixo para preservar os dados anteriores."
+                .into(),
+        );
+    }
+    let changed = transaction
+        .execute("DELETE FROM recurring_items WHERE id=?1", [id])
+        .map_err(|_| "Não foi possível excluir o fixo.".to_string())?;
+    if changed == 0 {
+        return Err("Fixo não encontrado.".into());
+    }
+    transaction.commit().map_err(|e| e.to_string())
+}
+
+fn previous_month(fiscal_month: &str) -> Result<String, String> {
+    validate_month(fiscal_month)?;
+    let date = NaiveDate::parse_from_str(&format!("{fiscal_month}-01"), "%Y-%m-%d")
+        .map_err(|e| e.to_string())?;
+    let (year, month) = if date.month() == 1 {
+        (date.year() - 1, 12)
+    } else {
+        (date.year(), date.month() - 1)
+    };
+    Ok(format!("{year:04}-{month:02}"))
+}
+
+#[tauri::command]
+pub fn end_recurring_item_from_month(
+    state: State<'_, AppState>,
+    recurring_item_id: i64,
+    fiscal_month: String,
+) -> Result<RecurringItemDto, String> {
+    end_recurring_item_from_month_db(&state.db, recurring_item_id, &fiscal_month)
+}
+
+pub fn end_recurring_item_from_month_db(
+    db: &Database,
+    recurring_item_id: i64,
+    fiscal_month: &str,
+) -> Result<RecurringItemDto, String> {
+    let end_month = previous_month(fiscal_month)?;
+    let mut connection = db.open().map_err(|e| e.to_string())?;
+    let transaction = connection.transaction().map_err(|e| e.to_string())?;
+    let exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM recurring_items WHERE id=?1)",
+            [recurring_item_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !exists {
+        return Err("Fixo não encontrado.".into());
+    }
+    transaction
+        .execute(
+            "UPDATE recurring_items SET end_month=?1, updated_at=CURRENT_TIMESTAMP WHERE id=?2",
+            (&end_month, recurring_item_id),
+        )
+        .map_err(|e| e.to_string())?;
+    transaction
+        .execute(
+            r#"
+            UPDATE transactions
+            SET status='cancelled', updated_at=CURRENT_TIMESTAMP
+            WHERE id IN (
+                SELECT transaction_id FROM recurring_occurrences
+                WHERE recurring_item_id=?1 AND fiscal_month>=?2 AND status='open'
+            )
+            "#,
+            (recurring_item_id, fiscal_month),
+        )
+        .map_err(|e| e.to_string())?;
+    transaction
+        .execute(
+            "UPDATE recurring_occurrences SET status='cancelled', updated_at=CURRENT_TIMESTAMP WHERE recurring_item_id=?1 AND fiscal_month>=?2 AND status='open'",
+            (recurring_item_id, fiscal_month),
+        )
+        .map_err(|e| e.to_string())?;
+    transaction.commit().map_err(|e| e.to_string())?;
+    get_item_db(&connection, recurring_item_id)
+}
+
 fn days_in_month(year: i32, month: u32) -> u32 {
     let (next_year, next_month) = if month == 12 {
         (year + 1, 1)
@@ -344,6 +442,38 @@ pub fn ensure_recurring_occurrences_for_month_db(
     }
     transaction.commit().map_err(|e| e.to_string())?;
     list_recurring_occurrences_db(&connection, fiscal_month)
+}
+
+pub fn ensure_recurring_occurrences_through_month_db(
+    db: &Database,
+    fiscal_month: &str,
+) -> Result<(), String> {
+    validate_month(fiscal_month)?;
+    let first_month: Option<String> = db
+        .open()
+        .map_err(|e| e.to_string())?
+        .query_row(
+            "SELECT MIN(start_month) FROM recurring_items WHERE active=1 AND start_month<=?1",
+            [fiscal_month],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let Some(mut current_month) = first_month else {
+        return Ok(());
+    };
+
+    while current_month.as_str() <= fiscal_month {
+        ensure_recurring_occurrences_for_month_db(db, &current_month)?;
+        let date = NaiveDate::parse_from_str(&format!("{current_month}-01"), "%Y-%m-%d")
+            .map_err(|e| e.to_string())?;
+        let (year, month) = if date.month() == 12 {
+            (date.year() + 1, 1)
+        } else {
+            (date.year(), date.month() + 1)
+        };
+        current_month = format!("{year:04}-{month:02}");
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -738,6 +868,86 @@ mod tests {
         assert!(occurrence_exists);
         assert!(transaction_exists);
         drop(connection);
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn deleting_item_without_history_removes_it_permanently() {
+        let fixture = fixture();
+        let item = create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+
+        delete_recurring_item_db(&fixture.db, item.id).unwrap();
+
+        let exists: bool = fixture
+            .db
+            .open()
+            .unwrap()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM recurring_items WHERE id=?1)",
+                [item.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!exists);
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn deleting_item_with_history_is_blocked_with_friendly_error() {
+        let fixture = fixture();
+        let item = create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+        ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-11").unwrap();
+
+        let error = delete_recurring_item_db(&fixture.db, item.id).unwrap_err();
+
+        assert_eq!(
+            error,
+            "Este fixo já possui histórico. Use Encerrar fixo para preservar os dados anteriores."
+        );
+        assert!(get_item_db(&fixture.db.open().unwrap(), item.id).is_ok());
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn ending_item_sets_end_month_preserves_past_and_cancels_only_future_open_occurrences() {
+        let fixture = fixture();
+        let item = create_recurring_item_db(&fixture.db, input(&fixture, "income")).unwrap();
+        let november = ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-11")
+            .unwrap()
+            .remove(0);
+        let december = ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-12")
+            .unwrap()
+            .remove(0);
+        let january = ensure_recurring_occurrences_for_month_db(&fixture.db, "2027-01")
+            .unwrap()
+            .remove(0);
+        set_recurring_occurrence_status_db(&fixture.db, january.id, "paid").unwrap();
+
+        let ended = end_recurring_item_from_month_db(&fixture.db, item.id, "2026-12").unwrap();
+
+        assert_eq!(ended.end_month.as_deref(), Some("2026-11"));
+        let connection = fixture.db.open().unwrap();
+        let statuses = [november, december, january]
+            .into_iter()
+            .map(|occurrence| {
+                connection
+                    .query_row(
+                        "SELECT o.status, t.status FROM recurring_occurrences o JOIN transactions t ON t.id=o.transaction_id WHERE o.id=?1",
+                        [occurrence.id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(statuses[0], ("open".into(), "open".into()));
+        assert_eq!(statuses[1], ("cancelled".into(), "cancelled".into()));
+        assert_eq!(statuses[2], ("paid".into(), "paid".into()));
+        drop(connection);
+        assert!(
+            ensure_recurring_occurrences_for_month_db(&fixture.db, "2027-02")
+                .unwrap()
+                .is_empty()
+        );
         cleanup(fixture);
     }
 

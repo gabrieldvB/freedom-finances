@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDownCircle, ArrowUpCircle, CalendarCheck2, CircleDollarSign, Clock3, CreditCard, Landmark, Plus, Scale, TrendingUp, Wallet } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, CalendarCheck2, CircleDollarSign, CreditCard, Landmark, Plus, Scale, TrendingUp, Wallet } from "lucide-react";
 import type { Page } from "../App";
 import { MonthPicker } from "../components/MonthPicker";
 import { TransactionTable } from "../components/TransactionTable";
@@ -13,7 +13,7 @@ export default function Dashboard({ fiscalMonth, defaultFiscalMonth, onMonthChan
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [openingBalanceOpen, setOpeningBalanceOpen] = useState(false);
+  const [initialBalanceOpen, setInitialBalanceOpen] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -37,21 +37,21 @@ export default function Dashboard({ fiscalMonth, defaultFiscalMonth, onMonthChan
 
   return (
     <>
-      <PageHeader title="Visão geral" subtitle="Seu dinheiro, sem nuvem e sem intermediários." actions={<><MonthPicker value={fiscalMonth} onChange={(month) => { setNotice(""); onMonthChange(month); }} /><button className="secondary" onClick={() => setOpeningBalanceOpen(true)}><Landmark size={17} /> Definir saldo inicial</button><button className="secondary" disabled={fiscalMonth === defaultFiscalMonth} onClick={() => void saveDefaultMonth()}><CalendarCheck2 size={17} /> Definir como padrão</button><button className="primary" onClick={() => onNavigate("transactions")}><Plus size={17} /> Novo lançamento</button></>} />
+      <PageHeader title="Visão geral" subtitle="Seu dinheiro, sem nuvem e sem intermediários." actions={<><MonthPicker value={fiscalMonth} onChange={(month) => { setNotice(""); onMonthChange(month); }} /><button className="secondary" onClick={() => setInitialBalanceOpen(true)}><Landmark size={17} /> Saldo inicial do controle</button><button className="secondary" disabled={fiscalMonth === defaultFiscalMonth} onClick={() => void saveDefaultMonth()}><CalendarCheck2 size={17} /> Definir como padrão</button><button className="primary" onClick={() => onNavigate("transactions")}><Plus size={17} /> Novo lançamento</button></>} />
       {error && <div className="notice notice-error">{error}</div>}
       {notice && <Notice type="success">{notice}</Notice>}
       {!data ? <Spinner /> : <>
         <section className="metric-grid">
-          <Metric label="Receitas do mês" value={data.projectedIncomeCents} icon={<ArrowUpCircle />} tone="positive" />
-          <Metric label="Despesas diretas" value={data.projectedDirectExpensesCents} icon={<ArrowDownCircle />} tone="negative" />
-          <Metric label="Faturas vencendo no mês" value={data.projectedCardInvoicesCents} icon={<CreditCard />} tone="card" />
-          <Metric label="Saldo projetado do mês" value={data.projectedBalanceCents} icon={<Scale />} tone={data.projectedBalanceCents >= 0 ? "positive" : "negative"} help="Saldo projetado do mês considera receitas, despesas e faturas previstas, independentemente de já estarem pagas." />
-          <Metric label="Em aberto" value={data.openCents} icon={<Clock3 />} tone="warning" />
-          <Metric label="Já pago" value={data.paidCents} icon={<Wallet />} />
-          <Metric label="Já recebido" value={data.receivedCents} icon={<CircleDollarSign />} tone="positive" />
-          <Metric label="Saldo inicial do mês" value={data.openingBalanceCents} icon={<Landmark />} />
-          <Metric label="Saldo realizado" value={data.realizedBalanceCents} icon={<Wallet />} tone={data.realizedBalanceCents >= 0 ? "positive" : "negative"} help="Saldo realizado considera apenas o que já foi pago ou recebido." />
+          <Metric label="Receitas previstas" value={data.projectedIncomeCents} icon={<ArrowUpCircle />} tone="positive" />
+          <Metric label="Despesas diretas previstas" value={data.projectedDirectExpensesCents} icon={<ArrowDownCircle />} tone="negative" />
+          <Metric label="Faturas previstas" value={data.projectedCardInvoicesCents} icon={<CreditCard />} tone="card" />
+          <Metric label="Resultado projetado do mês" value={data.projectedBalanceCents} icon={<Scale />} tone={data.projectedBalanceCents >= 0 ? "positive" : "negative"} help="Considera receitas, despesas e faturas previstas, independentemente de já estarem pagas." />
+          <Metric label="Receitas recebidas" value={data.realizedIncomeCents} icon={<CircleDollarSign />} tone="positive" />
+          <Metric label="Despesas pagas" value={data.realizedDirectExpensesCents} icon={<Wallet />} tone="negative" />
+          <Metric label="Faturas pagas" value={data.realizedCardInvoicesCents} icon={<CreditCard />} tone="card" />
+          <Metric label="Resultado realizado do mês" value={data.realizedMonthResultCents} icon={<Wallet />} tone={data.realizedMonthResultCents >= 0 ? "positive" : "negative"} help="Considera apenas receitas recebidas, despesas pagas e faturas pagas." />
           <Metric label="Saldo acumulado projetado" value={data.projectedAccumulatedBalanceCents} icon={<TrendingUp />} tone={data.projectedAccumulatedBalanceCents >= 0 ? "positive" : "negative"} />
+          <Metric label="Saldo acumulado realizado" value={data.realizedAccumulatedBalanceCents} icon={<Landmark />} tone={data.realizedAccumulatedBalanceCents >= 0 ? "positive" : "negative"} />
         </section>
 
         <div className="dashboard-grid">
@@ -86,7 +86,7 @@ export default function Dashboard({ fiscalMonth, defaultFiscalMonth, onMonthChan
           </section>
         </div>
       </>}
-      {openingBalanceOpen && <OpeningBalanceForm fiscalMonth={fiscalMonth} initialValue={data?.openingBalanceCents ?? 0} onClose={() => setOpeningBalanceOpen(false)} onSaved={async () => { setOpeningBalanceOpen(false); setNotice("Saldo inicial atualizado."); await load(); }} />}
+      {initialBalanceOpen && <InitialBalanceForm initialValue={data?.initialGlobalBalanceCents ?? 0} onClose={() => setInitialBalanceOpen(false)} onSaved={async () => { setInitialBalanceOpen(false); setNotice("Saldo inicial do controle atualizado."); await load(); }} />}
     </>
   );
 }
@@ -95,18 +95,16 @@ function Metric({ label, value, icon, tone = "neutral", help }: { label: string;
   return <article className={`metric metric-${tone}`} title={help}><div className="metric-icon">{icon}</div><span>{label}</span><strong>{formatMoney(value)}</strong></article>;
 }
 
-function OpeningBalanceForm({ fiscalMonth, initialValue, onClose, onSaved }: { fiscalMonth: string; initialValue: number; onClose: () => void; onSaved: () => Promise<void> }) {
+function InitialBalanceForm({ initialValue, onClose, onSaved }: { initialValue: number; onClose: () => void; onSaved: () => Promise<void> }) {
   const [amount, setAmount] = useState(moneyInput(initialValue));
-  const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.getMonthlyBalance(fiscalMonth).then((balance) => {
-      setAmount(moneyInput(balance.openingBalanceCents));
-      setNotes(balance.notes ?? "");
-    }).catch((err) => setError(errorMessage(err)));
-  }, [fiscalMonth]);
+    api.getInitialGlobalBalance()
+      .then((balance) => setAmount(moneyInput(balance)))
+      .catch((err) => setError(errorMessage(err)));
+  }, []);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -114,7 +112,7 @@ function OpeningBalanceForm({ fiscalMonth, initialValue, onClose, onSaved }: { f
     if (cents === null) return setError("Informe um saldo inicial válido.");
     setSaving(true); setError("");
     try {
-      await api.setMonthlyBalance(fiscalMonth, cents, notes.trim() || null);
+      await api.setInitialGlobalBalance(cents);
       await onSaved();
     } catch (err) {
       setError(errorMessage(err));
@@ -123,11 +121,10 @@ function OpeningBalanceForm({ fiscalMonth, initialValue, onClose, onSaved }: { f
     }
   }
 
-  return <Modal title="Definir saldo inicial" onClose={onClose}><form className="form-grid" onSubmit={submit}>
+  return <Modal title="Saldo inicial do controle" onClose={onClose}><form className="form-grid" onSubmit={submit}>
     {error && <div className="notice notice-error full">{error}</div>}
-    <label>Mês fiscal<input type="month" value={fiscalMonth} disabled /></label>
-    <label>Saldo inicial (R$)<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" autoFocus /></label>
-    <label className="full">Observação opcional<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label>
+    <label className="full">Saldo inicial (R$)<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" autoFocus /></label>
+    <p className="form-hint full">Esse valor é a base única dos saldos acumulados projetado e realizado.</p>
     <div className="form-actions full"><button type="button" className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar saldo inicial"}</button></div>
   </form></Modal>;
 }
