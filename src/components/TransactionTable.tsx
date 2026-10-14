@@ -33,8 +33,9 @@ export function TransactionTable({ rows, compact = false, onEdit, onStatus, onDe
                 {onEdit && <button className="icon-button" title="Editar" onClick={() => onEdit(row)}><Pencil size={16} /></button>}
                 {onStatus && row.status !== "paid" && <button className="icon-button success" title="Marcar como pago" onClick={() => onStatus(row, "paid")}><Check size={16} /></button>}
                 {onStatus && row.status !== "open" && <button className="icon-button" title="Reabrir" onClick={() => onStatus(row, "open")}><RotateCcw size={16} /></button>}
-                {onStatus && row.status !== "cancelled" && <button className="icon-button warning" title={row.recurringOccurrenceId ? "Cancelar ocorrência" : "Cancelar"} onClick={() => onStatus(row, "cancelled")}><XCircle size={16} /></button>}
-                {onDelete && !row.recurringOccurrenceId && <button className="icon-button danger" title="Excluir" onClick={() => onDelete(row)}><Trash2 size={16} /></button>}
+                {onStatus && row.status !== "cancelled" && !row.recurringOccurrenceId && <button className="icon-button warning" title="Cancelar" onClick={() => onStatus(row, "cancelled")}><XCircle size={16} /></button>}
+                {onDelete && row.recurringOccurrenceId && row.status !== "cancelled" && <button className="danger-button compact-action" title="Remover ocorrência deste mês" onClick={() => onDelete(row)}><Trash2 size={15} /> Remover deste mês</button>}
+                {onDelete && !row.recurringOccurrenceId && <button className="icon-button danger" title="Excluir lançamento" onClick={() => onDelete(row)}><Trash2 size={16} /></button>}
               </td>}
             </tr>
           ))}

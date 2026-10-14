@@ -252,7 +252,7 @@ pub fn delete_recurring_item_db(db: &Database, id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     if occurrence_count > 0 {
         return Err(
-            "Este fixo já possui histórico. Use Encerrar fixo para preservar os dados anteriores."
+            "Este fixo já possui histórico. Para preservar seus dados, use “Encerrar a partir deste mês”."
                 .into(),
         );
     }
@@ -902,7 +902,7 @@ mod tests {
 
         assert_eq!(
             error,
-            "Este fixo já possui histórico. Use Encerrar fixo para preservar os dados anteriores."
+            "Este fixo já possui histórico. Para preservar seus dados, use “Encerrar a partir deste mês”."
         );
         assert!(get_item_db(&fixture.db.open().unwrap(), item.id).is_ok());
         cleanup(fixture);

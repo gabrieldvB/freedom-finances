@@ -33,7 +33,7 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
   const filtered = useMemo(() => statusFilter === "all" ? rows : rows.filter((row) => row.status === statusFilter), [rows, statusFilter]);
 
   async function changeStatus(row: Transaction, status: TransactionStatus) {
-    if (row.recurringOccurrenceId && status === "cancelled" && !window.confirm("Cancelar esta ocorrência do mês? O lançamento vinculado também será cancelado.")) return;
+    if (row.recurringOccurrenceId && status === "cancelled" && !window.confirm("Este lançamento foi gerado por um fixo. Deseja remover apenas esta ocorrência mensal? O fixo continuará ativo nos próximos meses.")) return;
     try {
       if (row.recurringOccurrenceId) await api.setRecurringOccurrenceStatus(row.recurringOccurrenceId, status);
       else await api.setTransactionStatus(row.id, status);
@@ -43,7 +43,7 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
 
   async function remove(row: Transaction) {
     if (row.recurringOccurrenceId) {
-      if (!window.confirm("Cancelar esta ocorrência do mês? O lançamento vinculado também será cancelado.")) return;
+      if (!window.confirm("Este lançamento foi gerado por um fixo. Deseja remover apenas esta ocorrência mensal? O fixo continuará ativo nos próximos meses.")) return;
       try { await api.cancelRecurringOccurrence(row.recurringOccurrenceId); await load(); } catch (err) { setError(errorMessage(err)); }
       return;
     }

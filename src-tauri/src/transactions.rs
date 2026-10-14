@@ -211,8 +211,9 @@ pub fn delete_transaction(state: State<'_, AppState>, id: i64) -> Result<(), Str
 }
 
 pub fn delete_transaction_db(db: &Database, id: i64) -> Result<(), String> {
-    let connection = db.open().map_err(|e| e.to_string())?;
-    let recurring_occurrence_id = connection
+    let mut connection = db.open().map_err(|e| e.to_string())?;
+    let transaction = connection.transaction().map_err(|e| e.to_string())?;
+    let recurring_occurrence_id = transaction
         .query_row(
             "SELECT id FROM recurring_occurrences WHERE transaction_id=?1",
             [id],
@@ -220,10 +221,22 @@ pub fn delete_transaction_db(db: &Database, id: i64) -> Result<(), String> {
         )
         .optional()
         .map_err(|_| "Não foi possível verificar o histórico do lançamento.".to_string())?;
-    if recurring_occurrence_id.is_some() {
-        return Err("Este lançamento pertence a um fixo e já possui histórico. Para preservar seus dados, cancele a ocorrência.".into());
+    if let Some(occurrence_id) = recurring_occurrence_id {
+        transaction
+            .execute(
+                "UPDATE recurring_occurrences SET status='cancelled', updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+                [occurrence_id],
+            )
+            .map_err(|e| format!("Não foi possível cancelar a ocorrência mensal: {e}"))?;
+        transaction
+            .execute(
+                "UPDATE transactions SET status='cancelled', updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+                [id],
+            )
+            .map_err(|e| format!("Não foi possível cancelar o lançamento do mês: {e}"))?;
+        return transaction.commit().map_err(|e| e.to_string());
     }
-    let changed = connection
+    let changed = transaction
         .execute("DELETE FROM transactions WHERE id=?1", [id])
         .map_err(|_| {
             "Não foi possível excluir o lançamento porque ele possui histórico vinculado."
@@ -232,7 +245,7 @@ pub fn delete_transaction_db(db: &Database, id: i64) -> Result<(), String> {
     if changed == 0 {
         Err("Lançamento não encontrado.".into())
     } else {
-        Ok(())
+        transaction.commit().map_err(|e| e.to_string())
     }
 }
 
@@ -386,7 +399,54 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_transaction_with_recurring_history_returns_a_friendly_error() {
+    fn deleting_a_normal_transaction_removes_it() {
+        let root = std::env::temp_dir().join(format!(
+            "freedom-finances-normal-transaction-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = Database::at(root.join("test.db")).unwrap();
+        let connection = db.open().unwrap();
+        let account_id = connection
+            .query_row("SELECT id FROM accounts LIMIT 1", [], |row| row.get(0))
+            .unwrap();
+        let id = insert_transaction(
+            &connection,
+            &TransactionInput {
+                description: "Lançamento avulso".into(),
+                amount_cents: 12_300,
+                transaction_type: "expense".into(),
+                status: "open".into(),
+                transaction_date: "2026-11-10".into(),
+                fiscal_month: "2026-11".into(),
+                account_id: Some(account_id),
+                credit_card_id: None,
+                category_id: None,
+                notes: None,
+            },
+            None,
+        )
+        .unwrap();
+        drop(connection);
+
+        delete_transaction_db(&db, id).unwrap();
+
+        let exists: bool = db
+            .open()
+            .unwrap()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM transactions WHERE id=?1)",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!exists);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_recurring_transaction_cancels_only_that_month() {
         let root = std::env::temp_dir().join(format!(
             "freedom-finances-protected-transaction-{}",
             Uuid::new_v4()
@@ -398,7 +458,7 @@ mod tests {
             .query_row("SELECT id FROM accounts LIMIT 1", [], |row| row.get(0))
             .unwrap();
         drop(connection);
-        recurring::create_recurring_item_db(
+        let item = recurring::create_recurring_item_db(
             &db,
             RecurringItemInput {
                 name: "Salário".into(),
@@ -418,13 +478,36 @@ mod tests {
             .unwrap()
             .remove(0);
 
-        let error = delete_transaction_db(&db, occurrence.transaction_id).unwrap_err();
+        delete_transaction_db(&db, occurrence.transaction_id).unwrap();
 
-        assert!(error.contains("já possui histórico"));
-        assert!(!error.contains("FOREIGN KEY"));
         let saved = list_transactions_db(&db.open().unwrap(), "2026-11").unwrap();
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].recurring_occurrence_id, Some(occurrence.id));
+        assert_eq!(saved[0].status, "cancelled");
+        let connection = db.open().unwrap();
+        let occurrence_status: String = connection
+            .query_row(
+                "SELECT status FROM recurring_occurrences WHERE id=?1",
+                [occurrence.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let item_active: bool = connection
+            .query_row(
+                "SELECT active FROM recurring_items WHERE id=?1",
+                [item.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(occurrence_status, "cancelled");
+        assert!(item_active);
+        drop(connection);
+
+        let december =
+            recurring::ensure_recurring_occurrences_for_month_db(&db, "2026-12").unwrap();
+        assert_eq!(december.len(), 1);
+        assert_eq!(december[0].recurring_item_id, item.id);
+        assert_eq!(december[0].status, "open");
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }
