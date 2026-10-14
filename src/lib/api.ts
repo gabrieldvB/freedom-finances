@@ -95,6 +95,8 @@ export const api = {
     invoke<RecurringItem>("deactivate_recurring_item", { id }),
   deleteRecurringItem: (id: number) =>
     invoke<void>("delete_recurring_item", { id }),
+  deleteRecurringItemWithHistory: (recurringItemId: number) =>
+    invoke<void>("delete_recurring_item_with_history", { recurringItemId }),
   endRecurringItemFromMonth: (recurringItemId: number, fiscalMonth: string) =>
     invoke<RecurringItem>("end_recurring_item_from_month", { recurringItemId, fiscalMonth }),
   listRecurringOccurrences: (fiscalMonth: string) =>

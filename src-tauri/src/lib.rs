@@ -57,6 +57,7 @@ pub fn run() {
             recurring::set_recurring_item_active,
             recurring::deactivate_recurring_item,
             recurring::delete_recurring_item,
+            recurring::delete_recurring_item_with_history,
             recurring::end_recurring_item_from_month,
             recurring::list_recurring_occurrences,
             recurring::ensure_recurring_occurrences_for_month,

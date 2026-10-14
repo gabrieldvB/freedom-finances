@@ -16,6 +16,9 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
   const [categories, setCategories] = useState<Category[]>([]);
   const [editingItem, setEditingItem] = useState<RecurringItem | "new" | null>(null);
   const [editingOccurrence, setEditingOccurrence] = useState<RecurringOccurrence | null>(null);
+  const [deletingWithHistory, setDeletingWithHistory] = useState<RecurringItem | null>(null);
+  const [showCancelled, setShowCancelled] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -36,8 +39,10 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
 
   useEffect(() => { void load(); }, [load]);
 
-  const incomeRows = useMemo(() => occurrences.filter((row) => row.type === "income"), [occurrences]);
-  const expenseRows = useMemo(() => occurrences.filter((row) => row.type === "expense"), [occurrences]);
+  const visibleOccurrences = useMemo(() => showCancelled ? occurrences : occurrences.filter((row) => row.status !== "cancelled"), [occurrences, showCancelled]);
+  const visibleItems = useMemo(() => showInactive ? items : items.filter((item) => item.active), [items, showInactive]);
+  const incomeRows = useMemo(() => visibleOccurrences.filter((row) => row.type === "income"), [visibleOccurrences]);
+  const expenseRows = useMemo(() => visibleOccurrences.filter((row) => row.type === "expense"), [visibleOccurrences]);
 
   async function generate() {
     setBusy(true); setNotice(null);
@@ -85,21 +90,52 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
     <PageHeader title="Fixos" subtitle="Receitas e contas recorrentes com valores definidos mês a mês." actions={<><MonthPicker value={fiscalMonth} onChange={onMonthChange} /><button className="secondary" disabled={busy} onClick={() => void generate()}><WandSparkles size={17} /> {busy ? "Gerando…" : "Gerar fixos do mês"}</button><button className="primary" onClick={() => setEditingItem("new")}><Plus size={17} /> Novo fixo</button></>} />
     {notice && <Notice type={notice.type}>{notice.text}</Notice>}
     {loading ? <Spinner /> : <>
+      <div className="recurring-view-options">
+        <label className="visibility-toggle"><input type="checkbox" checked={showCancelled} onChange={(event) => setShowCancelled(event.target.checked)} /> Mostrar canceladas</label>
+      </div>
       <div className="recurring-grid">
         <OccurrenceSection title="Receitas" rows={incomeRows} onEdit={setEditingOccurrence} onStatus={changeStatus} onOpenTransactions={onOpenTransactions} />
         <OccurrenceSection title="Contas" rows={expenseRows} onEdit={setEditingOccurrence} onStatus={changeStatus} onOpenTransactions={onOpenTransactions} />
       </div>
       <section className="panel recurring-models">
-        <div className="panel-title"><div><h2>Modelos cadastrados</h2><p>Alterar o valor padrão não modifica ocorrências já geradas.</p></div></div>
-        {items.length ? <div className="recurring-model-list">{items.map((item) => {
+        <div className="panel-title"><div><h2>Modelos cadastrados</h2><p>Alterar o valor padrão não modifica ocorrências já geradas.</p></div><label className="visibility-toggle"><input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} /> Mostrar desativados</label></div>
+        {visibleItems.length ? <div className="recurring-model-list">{visibleItems.map((item) => {
           const ended = !item.active || Boolean(item.endMonth && item.endMonth < fiscalMonth);
-          return <div key={item.id} className={ended ? "inactive" : ""}><span><strong>{item.name}</strong><small>{item.type === "income" ? "Receita" : "Despesa"} · dia {item.dueDay} · desde {formatMonth(item.startMonth)}{item.endMonth ? ` até ${formatMonth(item.endMonth)}` : ""}{!item.active ? " · desativado" : ""}</small></span><strong>{formatMoney(item.defaultAmountCents)}</strong><div className="row-actions"><button className="icon-button" title="Editar modelo" onClick={() => setEditingItem(item)}><Pencil size={16} /></button><button className="ghost compact-action" disabled={ended} onClick={() => void endFromSelectedMonth(item)}><CalendarOff size={15} /> Encerrar a partir deste mês</button><button className="danger-button compact-action" onClick={() => void removePermanently(item)}><Trash2 size={15} /> Excluir definitivamente</button></div></div>;
-        })}</div> : <p className="muted">Nenhum fixo cadastrado.</p>}
+          return <div key={item.id} className={ended ? "inactive" : ""}><span><strong>{item.name}</strong><small>{item.type === "income" ? "Receita" : "Despesa"} · dia {item.dueDay} · desde {formatMonth(item.startMonth)}{item.endMonth ? ` até ${formatMonth(item.endMonth)}` : ""}{!item.active ? " · desativado" : ""}</small></span><strong>{formatMoney(item.defaultAmountCents)}</strong><div className="row-actions"><button className="icon-button" title="Editar modelo" onClick={() => setEditingItem(item)}><Pencil size={16} /></button><button className="ghost compact-action" disabled={ended} onClick={() => void endFromSelectedMonth(item)}><CalendarOff size={15} /> Encerrar a partir deste mês</button><button className="ghost compact-action" onClick={() => void removePermanently(item)}><Trash2 size={15} /> Excluir se não tiver histórico</button><button className="danger-button compact-action" onClick={() => setDeletingWithHistory(item)}><Trash2 size={15} /> Excluir fixo e histórico</button></div></div>;
+        })}</div> : <p className="muted">{showInactive ? "Nenhum fixo cadastrado." : "Nenhum modelo ativo cadastrado."}</p>}
       </section>
     </>}
     {editingItem && <RecurringItemForm item={editingItem === "new" ? null : editingItem} defaultFiscalMonth={defaultFiscalMonth} accounts={accounts} categories={categories} onClose={() => setEditingItem(null)} onSaved={async () => { setEditingItem(null); await load(); }} />}
     {editingOccurrence && <OccurrenceForm occurrence={editingOccurrence} onClose={() => setEditingOccurrence(null)} onSaved={async () => { setEditingOccurrence(null); await load(); }} />}
+    {deletingWithHistory && <DeleteRecurringHistoryModal item={deletingWithHistory} onClose={() => setDeletingWithHistory(null)} onDeleted={async () => { setDeletingWithHistory(null); setNotice({ type: "success", text: "Fixo e histórico excluídos definitivamente." }); await load(); }} />}
   </>;
+}
+
+function DeleteRecurringHistoryModal({ item, onClose, onDeleted }: { item: RecurringItem; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const nameMatches = confirmation === item.name;
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!nameMatches) return setError(`Digite exatamente “${item.name}” para confirmar.`);
+    setDeleting(true); setError("");
+    try {
+      await api.deleteRecurringItemWithHistory(item.id);
+      await onDeleted();
+    }
+    catch (err) { setError(errorMessage(err)); setDeleting(false); }
+  }
+
+  return <Modal title="Excluir fixo e histórico" onClose={() => { if (!deleting) onClose(); }}>
+    <form className="form-grid" onSubmit={submit}>
+      {error && <div className="notice notice-error full">{error}</div>}
+      <div className="destructive-warning full">Isso apagará o fixo, todas as ocorrências geradas e todos os lançamentos vinculados. Essa ação não pode ser desfeita.</div>
+      <label className="full">Digite <strong>“{item.name}”</strong> para confirmar<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoFocus autoComplete="off" /></label>
+      <div className="form-actions full"><button type="button" className="ghost" onClick={onClose} disabled={deleting}>Cancelar</button><button type="submit" className="danger-button" disabled={!nameMatches || deleting}>{deleting ? "Excluindo…" : "Excluir fixo e histórico"}</button></div>
+    </form>
+  </Modal>;
 }
 
 function OccurrenceSection({ title, rows, onEdit, onStatus, onOpenTransactions }: { title: string; rows: RecurringOccurrence[]; onEdit: (row: RecurringOccurrence) => void; onStatus: (row: RecurringOccurrence, status: TransactionStatus) => Promise<void>; onOpenTransactions: () => void }) {

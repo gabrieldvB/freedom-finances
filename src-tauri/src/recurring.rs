@@ -265,6 +265,68 @@ pub fn delete_recurring_item_db(db: &Database, id: i64) -> Result<(), String> {
     transaction.commit().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn delete_recurring_item_with_history(
+    state: State<'_, AppState>,
+    recurring_item_id: i64,
+) -> Result<(), String> {
+    delete_recurring_item_with_history_db(&state.db, recurring_item_id)
+}
+
+pub fn delete_recurring_item_with_history_db(
+    db: &Database,
+    recurring_item_id: i64,
+) -> Result<(), String> {
+    const DELETE_ERROR: &str =
+        "Não foi possível excluir o fixo e seu histórico. Nenhuma alteração foi aplicada.";
+
+    let mut connection = db.open().map_err(|_| DELETE_ERROR.to_string())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| DELETE_ERROR.to_string())?;
+    let exists: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM recurring_items WHERE id=?1)",
+            [recurring_item_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| DELETE_ERROR.to_string())?;
+    if !exists {
+        return Err("Fixo não encontrado.".into());
+    }
+
+    let transaction_ids = {
+        let mut statement = transaction
+            .prepare("SELECT transaction_id FROM recurring_occurrences WHERE recurring_item_id=?1")
+            .map_err(|_| DELETE_ERROR.to_string())?;
+        let ids = statement
+            .query_map([recurring_item_id], |row| row.get::<_, i64>(0))
+            .map_err(|_| DELETE_ERROR.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| DELETE_ERROR.to_string())?;
+        ids
+    };
+
+    transaction
+        .execute(
+            "DELETE FROM recurring_occurrences WHERE recurring_item_id=?1",
+            [recurring_item_id],
+        )
+        .map_err(|_| DELETE_ERROR.to_string())?;
+    for transaction_id in transaction_ids {
+        transaction
+            .execute("DELETE FROM transactions WHERE id=?1", [transaction_id])
+            .map_err(|_| DELETE_ERROR.to_string())?;
+    }
+    transaction
+        .execute(
+            "DELETE FROM recurring_items WHERE id=?1",
+            [recurring_item_id],
+        )
+        .map_err(|_| DELETE_ERROR.to_string())?;
+    transaction.commit().map_err(|_| DELETE_ERROR.to_string())
+}
+
 fn previous_month(fiscal_month: &str) -> Result<String, String> {
     validate_month(fiscal_month)?;
     let date = NaiveDate::parse_from_str(&format!("{fiscal_month}-01"), "%Y-%m-%d")
@@ -905,6 +967,91 @@ mod tests {
             "Este fixo já possui histórico. Para preservar seus dados, use “Encerrar a partir deste mês”."
         );
         assert!(get_item_db(&fixture.db.open().unwrap(), item.id).is_ok());
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn deleting_item_with_history_removes_only_its_complete_history() {
+        let fixture = fixture();
+        let mut recurring_input = input(&fixture, "income");
+        recurring_input.name = "Salary".into();
+        let item = create_recurring_item_db(&fixture.db, recurring_input).unwrap();
+        let november = ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-11")
+            .unwrap()
+            .remove(0);
+        let december = ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-12")
+            .unwrap()
+            .remove(0);
+        let connection = fixture.db.open().unwrap();
+        connection
+            .execute(
+                "INSERT INTO transactions(description, amount_cents, type, status, transaction_date, fiscal_month, account_id) VALUES ('Receita avulsa',12345,'income','open','2026-11-15','2026-11',?1)",
+                [fixture.account_id],
+            )
+            .unwrap();
+        let unrelated_transaction_id = connection.last_insert_rowid();
+        let before = dashboard::build_dashboard(&connection, "2026-11").unwrap();
+        assert_eq!(before.projected_income_cents, 312_345);
+        drop(connection);
+
+        delete_recurring_item_with_history_db(&fixture.db, item.id).unwrap();
+
+        let connection = fixture.db.open().unwrap();
+        let item_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM recurring_items WHERE id=?1)",
+                [item.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let occurrence_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM recurring_occurrences WHERE recurring_item_id=?1",
+                [item.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let linked_transaction_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE id IN (?1, ?2)",
+                (november.transaction_id, december.transaction_id),
+                |row| row.get(0),
+            )
+            .unwrap();
+        let unrelated_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM transactions WHERE id=?1)",
+                [unrelated_transaction_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let foreign_key_errors: i64 = connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query_map([], |_| Ok(()))
+            .unwrap()
+            .count() as i64;
+        let after = dashboard::build_dashboard(&connection, "2026-11").unwrap();
+
+        assert!(!item_exists);
+        assert_eq!(occurrence_count, 0);
+        assert_eq!(linked_transaction_count, 0);
+        assert!(unrelated_exists);
+        assert_eq!(foreign_key_errors, 0);
+        assert_eq!(after.projected_income_cents, 12_345);
+        drop(connection);
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn deleting_complete_history_reports_missing_item_without_sqlite_details() {
+        let fixture = fixture();
+
+        let error = delete_recurring_item_with_history_db(&fixture.db, 999_999).unwrap_err();
+
+        assert_eq!(error, "Fixo não encontrado.");
+        assert!(!error.contains("FOREIGN KEY"));
+        assert!(!error.contains("SQLite"));
         cleanup(fixture);
     }
 
