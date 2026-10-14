@@ -48,3 +48,6 @@ Thumbs.db
 *.tmp
 *.bak
 *.old
+
+# Tauri generated files
+src-tauri/gen/
