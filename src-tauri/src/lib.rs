@@ -6,6 +6,7 @@ mod dashboard;
 mod db;
 mod invoices;
 mod schema;
+mod settings;
 mod transactions;
 
 use db::Database;
@@ -48,6 +49,10 @@ pub fn run() {
             invoices::create_declared_invoice,
             invoices::update_invoice_declared_amount,
             invoices::set_invoice_status,
+            settings::get_setting,
+            settings::set_setting,
+            settings::get_default_fiscal_month,
+            settings::set_default_fiscal_month,
             backup::get_app_paths,
             backup::create_backup,
             backup::open_directory,

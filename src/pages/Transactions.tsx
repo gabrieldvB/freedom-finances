@@ -8,7 +8,7 @@ import { today } from "../lib/dates";
 import { moneyInput, parseMoney } from "../lib/money";
 import type { Account, Category, CreditCard as Card, InstallmentInput, Transaction, TransactionInput, TransactionStatus } from "../types";
 
-export default function Transactions({ fiscalMonth, onMonthChange }: { fiscalMonth: string; onMonthChange: (value: string) => void }) {
+export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthChange }: { fiscalMonth: string; defaultFiscalMonth: string; onMonthChange: (value: string) => void }) {
   const [rows, setRows] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -46,8 +46,8 @@ export default function Transactions({ fiscalMonth, onMonthChange }: { fiscalMon
     {error && <Notice type="error">{error}</Notice>}
     <div className="toolbar"><label>Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">Todos</option><option value="open">Em aberto</option><option value="paid">Pago</option><option value="cancelled">Cancelado</option></select></label><span>{filtered.length} lançamento(s)</span></div>
     <section className="panel">{loading ? <Spinner /> : <TransactionTable rows={filtered} onEdit={setEditing} onStatus={changeStatus} onDelete={remove} />}</section>
-    {editing && <TransactionForm transaction={editing === "new" ? null : editing} fiscalMonth={fiscalMonth} accounts={accounts} categories={categories} cards={cards} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
-    {installmentOpen && <InstallmentForm fiscalMonth={fiscalMonth} categories={categories} cards={cards} onClose={() => setInstallmentOpen(false)} onSaved={async () => { setInstallmentOpen(false); await load(); }} />}
+    {editing && <TransactionForm transaction={editing === "new" ? null : editing} fiscalMonth={defaultFiscalMonth} accounts={accounts} categories={categories} cards={cards} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
+    {installmentOpen && <InstallmentForm fiscalMonth={defaultFiscalMonth} categories={categories} cards={cards} onClose={() => setInstallmentOpen(false)} onSaved={async () => { setInstallmentOpen(false); await load(); }} />}
   </>;
 }
 

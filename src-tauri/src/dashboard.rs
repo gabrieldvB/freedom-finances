@@ -3,17 +3,16 @@ use tauri::State;
 
 use crate::{
     commands::{validate_month, CategoryTotalDto, DashboardDto},
-    invoices, transactions, AppState,
+    invoices, settings, transactions, AppState,
 };
 
 #[tauri::command]
 pub fn get_dashboard(
     state: State<'_, AppState>,
-    fiscal_month: String,
+    fiscal_month: Option<String>,
 ) -> Result<DashboardDto, String> {
-    validate_month(&fiscal_month)?;
     let connection = state.db.open().map_err(|e| e.to_string())?;
-    build_dashboard(&connection, &fiscal_month)
+    build_dashboard_for_month(&connection, fiscal_month.as_deref())
 }
 
 fn sum(connection: &Connection, sql: &str, fiscal_month: &str) -> Result<i64, String> {
@@ -22,10 +21,56 @@ fn sum(connection: &Connection, sql: &str, fiscal_month: &str) -> Result<i64, St
         .map_err(|e| e.to_string())
 }
 
+pub(crate) fn build_dashboard_for_month(
+    connection: &Connection,
+    fiscal_month: Option<&str>,
+) -> Result<DashboardDto, String> {
+    let resolved_month = match fiscal_month {
+        Some(value) => {
+            validate_month(value)?;
+            value.to_string()
+        }
+        None => settings::get_default_fiscal_month_db(connection)?,
+    };
+    build_dashboard(connection, &resolved_month)
+}
+
+fn sum_card_invoices_due_in_month(
+    connection: &Connection,
+    fiscal_month: &str,
+) -> Result<i64, String> {
+    let start = format!("{fiscal_month}-01");
+    let end = format!("{}-01", transactions::add_months(fiscal_month, 1)?);
+    connection
+        .query_row(
+            r#"
+            SELECT COALESCE(SUM(
+                i.declared_amount_cents + COALESCE((
+                    SELECT SUM(t.amount_cents)
+                    FROM transactions t
+                    WHERE t.invoice_id=i.id AND t.status!='cancelled'
+                ), 0)
+            ), 0)
+            FROM credit_card_invoices i
+            WHERE i.status IN ('open','closed','paid')
+              AND i.due_date>=?1 AND i.due_date<?2
+            "#,
+            (&start, &end),
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())
+}
+
 pub(crate) fn build_dashboard(
     connection: &Connection,
     fiscal_month: &str,
 ) -> Result<DashboardDto, String> {
+    validate_month(fiscal_month)?;
+    let projected_income_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='income' AND status!='cancelled'", fiscal_month)?;
+    let projected_direct_expenses_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='expense' AND status!='cancelled' AND credit_card_id IS NULL AND invoice_id IS NULL", fiscal_month)?;
+    let projected_card_invoices_cents = sum_card_invoices_due_in_month(connection, fiscal_month)?;
+    let projected_balance_cents =
+        projected_income_cents - projected_direct_expenses_cents - projected_card_invoices_cents;
     let income_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='income' AND status!='cancelled'", fiscal_month)?;
     let transaction_expense_cents = sum(connection, "SELECT COALESCE(SUM(amount_cents),0) FROM transactions WHERE fiscal_month=?1 AND type='expense' AND status!='cancelled'", fiscal_month)?;
     let declared_expense_cents = sum(connection, "SELECT COALESCE(SUM(declared_amount_cents),0) FROM credit_card_invoices WHERE fiscal_month=?1 AND status!='cancelled'", fiscal_month)?;
@@ -83,6 +128,10 @@ pub(crate) fn build_dashboard(
 
     Ok(DashboardDto {
         fiscal_month: fiscal_month.into(),
+        projected_income_cents,
+        projected_direct_expenses_cents,
+        projected_card_invoices_cents,
+        projected_balance_cents,
         income_cents,
         expense_cents,
         balance_cents: income_cents - expense_cents,
@@ -99,19 +148,55 @@ pub(crate) fn build_dashboard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{commands::DeclaredInvoiceInput, db::Database};
+    use crate::{commands::DeclaredInvoiceInput, db::Database, settings};
     use uuid::Uuid;
 
-    #[test]
-    fn declared_invoice_without_transactions_is_in_dashboard_and_projection() {
+    fn database() -> (std::path::PathBuf, Database, i64, i64) {
         let root =
             std::env::temp_dir().join(format!("freedom-finances-dashboard-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let db = Database::at(root.join("test.db")).unwrap();
         let connection = db.open().unwrap();
+        let account_id = connection
+            .query_row("SELECT id FROM accounts LIMIT 1", [], |row| row.get(0))
+            .unwrap();
         connection.execute("INSERT INTO credit_cards(name, closing_day, due_day, limit_cents) VALUES ('Inter',20,15,500000)", []).unwrap();
         let card_id = connection.last_insert_rowid();
         drop(connection);
+        (root, db, account_id, card_id)
+    }
+
+    fn declare_invoice(
+        db: &Database,
+        card_id: i64,
+        amount: i64,
+        status: &str,
+    ) -> crate::commands::InvoiceDto {
+        invoices::create_declared_invoice_db(
+            db,
+            DeclaredInvoiceInput {
+                credit_card_id: card_id,
+                fiscal_month: "2026-11".into(),
+                declared_amount_cents: amount,
+                due_date: "2026-11-15".into(),
+                closing_date: None,
+                status: status.into(),
+                declared_note: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn insert_account_transaction(db: &Database, account_id: i64, kind: &str, amount: i64) {
+        db.open().unwrap().execute(
+            "INSERT INTO transactions(description, amount_cents, type, status, transaction_date, fiscal_month, account_id) VALUES ('Teste', ?1, ?2, 'open', '2026-11-05', '2026-11', ?3)",
+            (amount, kind, account_id),
+        ).unwrap();
+    }
+
+    #[test]
+    fn declared_invoice_without_transactions_is_in_dashboard_and_projection() {
+        let (root, db, _, card_id) = database();
 
         for (month, amount, due_date) in [
             ("2026-11", 102_636, "2026-11-15"),
@@ -137,6 +222,8 @@ mod tests {
         assert_eq!(dashboard.expense_cents, 102_636);
         assert_eq!(dashboard.open_cents, 102_636);
         assert_eq!(dashboard.balance_cents, -102_636);
+        assert_eq!(dashboard.projected_card_invoices_cents, 102_636);
+        assert_eq!(dashboard.projected_balance_cents, -102_636);
         assert_eq!(dashboard.open_invoices_total_cents, 102_636);
         assert_eq!(dashboard.open_invoices.len(), 1);
         assert_eq!(dashboard.open_invoices[0].transaction_count, 0);
@@ -149,6 +236,80 @@ mod tests {
                 .sum::<i64>(),
             83_673
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn dashboard_uses_saved_default_when_month_is_omitted() {
+        let (root, db, _, _) = database();
+        let connection = db.open().unwrap();
+        settings::set_default_fiscal_month_db(&connection, "2026-11").unwrap();
+        let dashboard = build_dashboard_for_month(&connection, None).unwrap();
+        assert_eq!(dashboard.fiscal_month, "2026-11");
+        drop(connection);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn projected_balance_uses_income_and_direct_expenses() {
+        let (root, db, account_id, _) = database();
+        insert_account_transaction(&db, account_id, "income", 300_000);
+        insert_account_transaction(&db, account_id, "expense", 40_000);
+
+        let dashboard = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
+        assert_eq!(dashboard.projected_income_cents, 300_000);
+        assert_eq!(dashboard.projected_direct_expenses_cents, 40_000);
+        assert_eq!(dashboard.projected_card_invoices_cents, 0);
+        assert_eq!(dashboard.projected_balance_cents, 260_000);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_invoice_due_in_month_reduces_projected_balance() {
+        let (root, db, _, card_id) = database();
+        declare_invoice(&db, card_id, 102_636, "open");
+        let dashboard = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
+        assert_eq!(dashboard.projected_card_invoices_cents, 102_636);
+        assert_eq!(dashboard.projected_balance_cents, -102_636);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn card_purchase_is_counted_only_inside_its_invoice() {
+        let (root, db, account_id, card_id) = database();
+        insert_account_transaction(&db, account_id, "income", 300_000);
+        insert_account_transaction(&db, account_id, "expense", 40_000);
+        let invoice = declare_invoice(&db, card_id, 102_636, "open");
+        db.open().unwrap().execute(
+            "INSERT INTO transactions(description, amount_cents, type, status, transaction_date, fiscal_month, credit_card_id, invoice_id) VALUES ('Mercado', 20000, 'expense', 'open', '2026-11-05', '2026-11', ?1, ?2)",
+            (card_id, invoice.id),
+        ).unwrap();
+
+        let dashboard = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
+        assert_eq!(dashboard.projected_income_cents, 300_000);
+        assert_eq!(dashboard.projected_direct_expenses_cents, 40_000);
+        assert_eq!(dashboard.projected_card_invoices_cents, 122_636);
+        assert_eq!(dashboard.projected_balance_cents, 137_364);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn paid_invoice_remains_in_projected_month() {
+        let (root, db, _, card_id) = database();
+        declare_invoice(&db, card_id, 102_636, "paid");
+        let dashboard = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
+        assert_eq!(dashboard.projected_card_invoices_cents, 102_636);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_invoice_is_omitted_from_projected_month() {
+        let (root, db, _, card_id) = database();
+        let invoice = declare_invoice(&db, card_id, 102_636, "open");
+        invoices::set_invoice_status_db(&db, invoice.id, "cancelled").unwrap();
+        let dashboard = build_dashboard(&db.open().unwrap(), "2026-11").unwrap();
+        assert_eq!(dashboard.projected_card_invoices_cents, 0);
+        assert_eq!(dashboard.projected_balance_cents, 0);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

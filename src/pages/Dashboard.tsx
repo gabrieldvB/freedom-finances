@@ -1,35 +1,49 @@
 import { useEffect, useState } from "react";
-import { ArrowDownCircle, ArrowUpCircle, Clock3, CreditCard, Plus, Scale, Wallet } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, CalendarCheck2, Clock3, CreditCard, Plus, Scale, Wallet } from "lucide-react";
 import type { Page } from "../App";
 import { MonthPicker } from "../components/MonthPicker";
 import { TransactionTable } from "../components/TransactionTable";
-import { EmptyState, PageHeader, Spinner } from "../components/Ui";
+import { EmptyState, Notice, PageHeader, Spinner } from "../components/Ui";
 import { api, errorMessage } from "../lib/api";
 import { formatDate, formatMonth } from "../lib/dates";
 import { formatMoney } from "../lib/money";
 import type { DashboardData } from "../types";
 
-export default function Dashboard({ fiscalMonth, onMonthChange, onNavigate }: { fiscalMonth: string; onMonthChange: (value: string) => void; onNavigate: (page: Page) => void }) {
+export default function Dashboard({ fiscalMonth, defaultFiscalMonth, onMonthChange, onDefaultMonthChange, onNavigate }: { fiscalMonth: string; defaultFiscalMonth: string; onMonthChange: (value: string) => void; onDefaultMonthChange: (value: string) => void; onNavigate: (page: Page) => void }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     setError("");
     api.dashboard(fiscalMonth).then(setData).catch((err) => setError(errorMessage(err)));
   }, [fiscalMonth]);
 
+  async function saveDefaultMonth() {
+    setError("");
+    setNotice("");
+    try {
+      const saved = await api.setDefaultFiscalMonth(fiscalMonth);
+      onDefaultMonthChange(saved);
+      setNotice("Mês fiscal padrão atualizado.");
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   return (
     <>
-      <PageHeader title="Visão geral" subtitle="Seu dinheiro, sem nuvem e sem intermediários." actions={<><MonthPicker value={fiscalMonth} onChange={onMonthChange} /><button className="primary" onClick={() => onNavigate("transactions")}><Plus size={17} /> Novo lançamento</button></>} />
+      <PageHeader title="Visão geral" subtitle="Seu dinheiro, sem nuvem e sem intermediários." actions={<><MonthPicker value={fiscalMonth} onChange={(month) => { setNotice(""); onMonthChange(month); }} /><button className="secondary" disabled={fiscalMonth === defaultFiscalMonth} onClick={() => void saveDefaultMonth()}><CalendarCheck2 size={17} /> Definir como padrão</button><button className="primary" onClick={() => onNavigate("transactions")}><Plus size={17} /> Novo lançamento</button></>} />
       {error && <div className="notice notice-error">{error}</div>}
+      {notice && <Notice type="success">{notice}</Notice>}
       {!data ? <Spinner /> : <>
         <section className="metric-grid">
-          <Metric label="Receitas" value={data.incomeCents} icon={<ArrowUpCircle />} tone="positive" />
-          <Metric label="Despesas" value={data.expenseCents} icon={<ArrowDownCircle />} tone="negative" />
-          <Metric label="Saldo do mês" value={data.balanceCents} icon={<Scale />} tone={data.balanceCents >= 0 ? "positive" : "negative"} />
+          <Metric label="Receitas do mês" value={data.projectedIncomeCents} icon={<ArrowUpCircle />} tone="positive" />
+          <Metric label="Despesas diretas" value={data.projectedDirectExpensesCents} icon={<ArrowDownCircle />} tone="negative" />
+          <Metric label="Faturas vencendo no mês" value={data.projectedCardInvoicesCents} icon={<CreditCard />} tone="card" />
+          <Metric label={data.projectedBalanceCents < 0 ? "Saldo projetado negativo" : "Saldo projetado"} value={data.projectedBalanceCents} icon={<Scale />} tone={data.projectedBalanceCents >= 0 ? "positive" : "negative"} />
           <Metric label="Em aberto" value={data.openCents} icon={<Clock3 />} tone="warning" />
-          <Metric label="Pago" value={data.paidCents} icon={<Wallet />} />
-          <Metric label="Faturas abertas" value={data.openInvoicesTotalCents} icon={<CreditCard />} tone="card" />
+          <Metric label="Já pago" value={data.paidCents} icon={<Wallet />} />
         </section>
 
         <div className="dashboard-grid">

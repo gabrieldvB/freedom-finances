@@ -15,8 +15,15 @@ import type {
 } from "../types";
 
 export const api = {
-  dashboard: (fiscalMonth: string) =>
-    invoke<DashboardData>("get_dashboard", { fiscalMonth }),
+  dashboard: (fiscalMonth?: string) =>
+    invoke<DashboardData>("get_dashboard", { fiscalMonth: fiscalMonth ?? null }),
+
+  getSetting: (key: string) => invoke<string | null>("get_setting", { key }),
+  setSetting: (key: string, value: string) =>
+    invoke<void>("set_setting", { key, value }),
+  getDefaultFiscalMonth: () => invoke<string>("get_default_fiscal_month"),
+  setDefaultFiscalMonth: (fiscalMonth: string) =>
+    invoke<string>("set_default_fiscal_month", { fiscalMonth }),
 
   listTransactions: (fiscalMonth: string) =>
     invoke<Transaction[]>("list_transactions", { fiscalMonth }),

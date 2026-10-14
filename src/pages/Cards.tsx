@@ -7,7 +7,7 @@ import { formatMoney, moneyInput, parseMoney } from "../lib/money";
 import type { CreditCard, Invoice, InvoiceStatus } from "../types";
 import InvoiceDetail from "./InvoiceDetail";
 
-export default function Cards() {
+export default function Cards({ defaultFiscalMonth }: { defaultFiscalMonth: string }) {
   const [cards, setCards] = useState<CreditCard[]>([]); const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [editing, setEditing] = useState<CreditCard | "new" | null>(null); const [selectedInvoice, setSelectedInvoice] = useState<number | null>(null);
   const [declaring, setDeclaring] = useState(false);
@@ -23,7 +23,7 @@ export default function Cards() {
       {cards.map((card) => <CardSection key={card.id} card={card} invoices={invoices.filter((row) => row.creditCardId === card.id)} onEdit={() => setEditing(card)} onToggle={() => void toggle(card)} onInvoice={setSelectedInvoice} />)}
     </div>}
     {editing && <CardForm card={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
-    {declaring && <DeclaredInvoiceForm cards={cards.filter((card) => card.active)} onClose={() => setDeclaring(false)} onSaved={async (invoice) => { setDeclaring(false); await load(); setSelectedInvoice(invoice.id); }} />}
+    {declaring && <DeclaredInvoiceForm cards={cards.filter((card) => card.active)} defaultFiscalMonth={defaultFiscalMonth} onClose={() => setDeclaring(false)} onSaved={async (invoice) => { setDeclaring(false); await load(); setSelectedInvoice(invoice.id); }} />}
     {selectedInvoice !== null && <InvoiceDetail id={selectedInvoice} onClose={() => setSelectedInvoice(null)} onChanged={load} />}
   </>;
 }
@@ -71,9 +71,9 @@ function suggestedDueDate(fiscalMonth: string, card: CreditCard | undefined): st
   return `${fiscalMonth}-${String(Math.min(card.dueDay, lastDay)).padStart(2, "0")}`;
 }
 
-function DeclaredInvoiceForm({ cards, onClose, onSaved }: { cards: CreditCard[]; onClose: () => void; onSaved: (invoice: Invoice) => Promise<void> }) {
+function DeclaredInvoiceForm({ cards, defaultFiscalMonth, onClose, onSaved }: { cards: CreditCard[]; defaultFiscalMonth: string; onClose: () => void; onSaved: (invoice: Invoice) => Promise<void> }) {
   const initialCard = cards[0];
-  const initialMonth = currentFiscalMonth();
+  const initialMonth = defaultFiscalMonth;
   const [creditCardId, setCreditCardId] = useState(initialCard?.id ?? 0);
   const [fiscalMonth, setFiscalMonth] = useState(initialMonth);
   const [amount, setAmount] = useState("");

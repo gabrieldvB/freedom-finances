@@ -9,6 +9,8 @@ Aplicativo desktop local e offline para finanças pessoais. A interface é React
 - CRUD e ativação/desativação de categorias, cartões e contas.
 - Faturas mensais criadas automaticamente para lançamentos no cartão.
 - Declaração manual de faturas preexistentes, mesmo sem lançamentos cadastrados.
+- Mês fiscal padrão persistido localmente para o Dashboard e novos formulários.
+- Saldo projetado sem duplicar compras individuais já incluídas nas faturas.
 - Compra parcelada com divisão exata dos centavos e faturas futuras.
 - Fechar, pagar, reabrir e cancelar fatura.
 - Pagamento de fatura marca seus lançamentos abertos como pagos.
@@ -101,6 +103,20 @@ total = saldo declarado + lançamentos vinculados não cancelados
 O saldo declarado permite registrar uma fatura que já existia antes do início do uso do app. Na tela **Cartões e faturas**, use **Declarar fatura em aberto** e informe cartão, mês fiscal, valor, vencimento, fechamento opcional, status e observação. Se a fatura do mesmo cartão e mês já existir, a declaração a atualiza sem apagar seus lançamentos.
 
 Bancos criados por versões anteriores recebem as colunas de declaração por uma migração aditiva e idempotente durante a inicialização.
+
+## Mês fiscal padrão e projeção
+
+No Dashboard, escolha o mês desejado e use **Definir como padrão**. A preferência é salva na tabela `settings` com a chave `default_fiscal_month`; quando ela não existe, o aplicativo usa o mês atual do sistema. O valor também é mostrado em **Configurações** e sugerido ao criar lançamentos, receitas, compras parceladas e faturas declaradas.
+
+O saldo projetado evita contar compras de cartão duas vezes:
+
+```text
+saldo projetado = receitas do mês
+                 - despesas diretas do mês
+                 - total das faturas com vencimento no mês
+```
+
+Faturas abertas, fechadas e pagas entram pela data de vencimento. Faturas canceladas e lançamentos cancelados não entram no cálculo.
 
 Uma compra de `10000` centavos em três parcelas gera:
 

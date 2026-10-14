@@ -86,6 +86,10 @@ export interface CategoryTotal {
 
 export interface DashboardData {
   fiscalMonth: string;
+  projectedIncomeCents: number;
+  projectedDirectExpensesCents: number;
+  projectedCardInvoicesCents: number;
+  projectedBalanceCents: number;
   incomeCents: number;
   expenseCents: number;
   balanceCents: number;

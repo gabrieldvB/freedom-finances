@@ -153,6 +153,10 @@ pub struct CategoryTotalDto {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardDto {
     pub fiscal_month: String,
+    pub projected_income_cents: i64,
+    pub projected_direct_expenses_cents: i64,
+    pub projected_card_invoices_cents: i64,
+    pub projected_balance_cents: i64,
     pub income_cents: i64,
     pub expense_cents: i64,
     pub balance_cents: i64,
@@ -174,6 +178,14 @@ pub struct AppPathsDto {
 }
 
 pub fn validate_month(value: &str) -> Result<(), String> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 7
+        || bytes[4] != b'-'
+        || !bytes[..4].iter().all(u8::is_ascii_digit)
+        || !bytes[5..].iter().all(u8::is_ascii_digit)
+    {
+        return Err("Mês fiscal inválido; use AAAA-MM.".to_string());
+    }
     chrono::NaiveDate::parse_from_str(&format!("{value}-01"), "%Y-%m-%d")
         .map(|_| ())
         .map_err(|_| "Mês fiscal inválido; use AAAA-MM.".to_string())

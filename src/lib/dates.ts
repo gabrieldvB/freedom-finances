@@ -19,6 +19,12 @@ export function formatMonth(value: string): string {
   return `${month}/${year}`;
 }
 
+export function formatMonthLong(value: string): string {
+  const [year, month] = value.split("-").map(Number);
+  const label = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(new Date(year, month - 1, 1));
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)}/${year}`;
+}
+
 export function shiftMonth(value: string, delta: number): string {
   const [year, month] = value.split("-").map(Number);
   const date = new Date(year, month - 1 + delta, 1);

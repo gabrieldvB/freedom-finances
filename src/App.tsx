@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CreditCard, LayoutDashboard, ListChecks, Settings as SettingsIcon, Shapes, WalletCards } from "lucide-react";
 import { currentFiscalMonth } from "./lib/dates";
 import Dashboard from "./pages/Dashboard";
@@ -6,6 +6,8 @@ import Transactions from "./pages/Transactions";
 import Cards from "./pages/Cards";
 import Categories from "./pages/Categories";
 import Settings from "./pages/Settings";
+import { Spinner } from "./components/Ui";
+import { api } from "./lib/api";
 
 export type Page = "dashboard" | "transactions" | "cards" | "categories" | "settings";
 
@@ -19,7 +21,21 @@ const navigation = [
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
-  const [fiscalMonth, setFiscalMonth] = useState(currentFiscalMonth());
+  const [fiscalMonth, setFiscalMonth] = useState<string | null>(null);
+  const [defaultFiscalMonth, setDefaultFiscalMonth] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getDefaultFiscalMonth()
+      .then((month) => { setDefaultFiscalMonth(month); setFiscalMonth(month); })
+      .catch(() => { const fallback = currentFiscalMonth(); setDefaultFiscalMonth(fallback); setFiscalMonth(fallback); });
+  }, []);
+
+  function navigate(nextPage: Page) {
+    if (defaultFiscalMonth && (nextPage === "dashboard" || nextPage === "transactions")) {
+      setFiscalMonth(defaultFiscalMonth);
+    }
+    setPage(nextPage);
+  }
 
   return (
     <div className="app-shell">
@@ -30,7 +46,7 @@ export default function App() {
         </div>
         <nav>
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button key={id} className={page === id ? "active" : ""} onClick={() => setPage(id)}>
+            <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}>
               <Icon size={19} /> {label}
             </button>
           ))}
@@ -38,11 +54,13 @@ export default function App() {
         <div className="sidebar-footer"><span className="offline-dot" /> Dados locais · offline</div>
       </aside>
       <main className="content">
-        {page === "dashboard" && <Dashboard fiscalMonth={fiscalMonth} onMonthChange={setFiscalMonth} onNavigate={setPage} />}
-        {page === "transactions" && <Transactions fiscalMonth={fiscalMonth} onMonthChange={setFiscalMonth} />}
-        {page === "cards" && <Cards />}
-        {page === "categories" && <Categories />}
-        {page === "settings" && <Settings />}
+        {!fiscalMonth || !defaultFiscalMonth ? <Spinner /> : <>
+          {page === "dashboard" && <Dashboard fiscalMonth={fiscalMonth} defaultFiscalMonth={defaultFiscalMonth} onMonthChange={setFiscalMonth} onDefaultMonthChange={setDefaultFiscalMonth} onNavigate={navigate} />}
+          {page === "transactions" && <Transactions fiscalMonth={fiscalMonth} defaultFiscalMonth={defaultFiscalMonth} onMonthChange={setFiscalMonth} />}
+          {page === "cards" && <Cards defaultFiscalMonth={defaultFiscalMonth} />}
+          {page === "categories" && <Categories />}
+          {page === "settings" && <Settings defaultFiscalMonth={defaultFiscalMonth} />}
+        </>}
       </main>
     </div>
   );
