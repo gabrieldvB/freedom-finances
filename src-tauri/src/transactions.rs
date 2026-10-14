@@ -249,6 +249,101 @@ pub fn delete_transaction_db(db: &Database, id: i64) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+pub fn delete_installment_transactions(
+    state: State<'_, AppState>,
+    transaction_id: i64,
+    scope: String,
+) -> Result<(), String> {
+    delete_installment_transactions_db(&state.db, transaction_id, &scope)
+}
+
+pub fn delete_installment_transactions_db(
+    db: &Database,
+    transaction_id: i64,
+    scope: &str,
+) -> Result<(), String> {
+    if !["single", "from_current", "all"].contains(&scope) {
+        return Err("Escopo de exclusão inválido.".into());
+    }
+    const DELETE_ERROR: &str =
+        "Não foi possível excluir as parcelas selecionadas. Nenhuma alteração foi aplicada.";
+
+    let mut connection = db.open().map_err(|_| DELETE_ERROR.to_string())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|_| DELETE_ERROR.to_string())?;
+    let selected = transaction
+        .query_row(
+            r#"
+            SELECT t.installment_group_id, t.installment_number, ro.id
+            FROM transactions t
+            LEFT JOIN recurring_occurrences ro ON ro.transaction_id=t.id
+            WHERE t.id=?1
+            "#,
+            [transaction_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<u32>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| DELETE_ERROR.to_string())?
+        .ok_or_else(|| "Lançamento não encontrado.".to_string())?;
+
+    let (installment_group_id, installment_number, recurring_occurrence_id) = selected;
+    if let Some(occurrence_id) = recurring_occurrence_id {
+        transaction
+            .execute(
+                "UPDATE recurring_occurrences SET status='cancelled', updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+                [occurrence_id],
+            )
+            .map_err(|_| DELETE_ERROR.to_string())?;
+        transaction
+            .execute(
+                "UPDATE transactions SET status='cancelled', updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+                [transaction_id],
+            )
+            .map_err(|_| DELETE_ERROR.to_string())?;
+        return transaction.commit().map_err(|_| DELETE_ERROR.to_string());
+    }
+
+    let Some(group_id) = installment_group_id else {
+        transaction
+            .execute("DELETE FROM transactions WHERE id=?1", [transaction_id])
+            .map_err(|_| DELETE_ERROR.to_string())?;
+        return transaction.commit().map_err(|_| DELETE_ERROR.to_string());
+    };
+
+    let changed = match scope {
+        "single" => transaction.execute(
+            "DELETE FROM transactions WHERE id=?1 AND installment_group_id=?2",
+            params![transaction_id, group_id],
+        ),
+        "from_current" => {
+            let number = installment_number
+                .ok_or_else(|| "Número da parcela não encontrado.".to_string())?;
+            transaction.execute(
+                "DELETE FROM transactions WHERE installment_group_id=?1 AND installment_number>=?2",
+                params![group_id, number],
+            )
+        }
+        "all" => transaction.execute(
+            "DELETE FROM transactions WHERE installment_group_id=?1",
+            [group_id],
+        ),
+        _ => unreachable!(),
+    }
+    .map_err(|_| DELETE_ERROR.to_string())?;
+    if changed == 0 {
+        return Err("Nenhuma parcela foi encontrada para exclusão.".into());
+    }
+    transaction.commit().map_err(|_| DELETE_ERROR.to_string())
+}
+
 pub fn split_cents(total: i64, installments: u32) -> Result<Vec<i64>, String> {
     if total <= 0 {
         return Err("O valor total deve ser maior que zero.".into());
@@ -323,7 +418,57 @@ pub fn create_installments_db(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backup, commands::RecurringItemInput, db::Database, invoices, recurring};
+    use crate::{
+        backup, commands::RecurringItemInput, dashboard, db::Database, invoices, recurring,
+    };
+
+    struct InstallmentFixture {
+        root: std::path::PathBuf,
+        db: Database,
+        card_id: i64,
+    }
+
+    fn installment_fixture() -> InstallmentFixture {
+        let root = std::env::temp_dir().join(format!(
+            "freedom-finances-installment-delete-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = Database::at(root.join("test.db")).unwrap();
+        let connection = db.open().unwrap();
+        connection.execute("INSERT INTO credit_cards(name, closing_day, due_day, limit_cents) VALUES ('Cartão teste',20,10,500000)", []).unwrap();
+        let card_id = connection.last_insert_rowid();
+        drop(connection);
+        InstallmentFixture { root, db, card_id }
+    }
+
+    fn create_test_installments(
+        fixture: &InstallmentFixture,
+        description: &str,
+        total_amount_cents: i64,
+        installments: u32,
+        first_fiscal_month: &str,
+    ) -> Vec<TransactionDto> {
+        create_installments_db(
+            &fixture.db,
+            InstallmentInput {
+                description: description.into(),
+                total_amount_cents,
+                installments,
+                purchase_date: "2026-10-13".into(),
+                first_fiscal_month: first_fiscal_month.into(),
+                credit_card_id: fixture.card_id,
+                category_id: None,
+                notes: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn cleanup_installment_fixture(fixture: InstallmentFixture) {
+        drop(fixture.db);
+        std::fs::remove_dir_all(fixture.root).unwrap();
+    }
 
     #[test]
     fn splits_cents_without_losing_remainder() {
@@ -396,6 +541,166 @@ mod tests {
         assert_eq!(integrity, "ok");
         drop(backup_connection);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deleting_single_installment_preserves_the_rest_of_the_group() {
+        let fixture = installment_fixture();
+        let created = create_test_installments(&fixture, "Compra 4x", 40_000, 4, "2026-11");
+        let group_id = created[0].installment_group_id.as_deref().unwrap();
+
+        delete_installment_transactions_db(&fixture.db, created[1].id, "single").unwrap();
+
+        let connection = fixture.db.open().unwrap();
+        let remaining = connection
+            .prepare("SELECT installment_number FROM transactions WHERE installment_group_id=?1 ORDER BY installment_number")
+            .unwrap()
+            .query_map([group_id], |row| row.get::<_, u32>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(remaining, vec![1, 3, 4]);
+        assert!(get(&connection, created[1].id).is_err());
+        drop(connection);
+        cleanup_installment_fixture(fixture);
+    }
+
+    #[test]
+    fn deleting_from_current_installment_preserves_earlier_and_other_groups() {
+        let fixture = installment_fixture();
+        let created = create_test_installments(&fixture, "Compra 12x", 120_000, 12, "2026-11");
+        let other = create_test_installments(&fixture, "Outra compra", 25_000, 3, "2028-01");
+        let group_id = created[0].installment_group_id.as_deref().unwrap();
+        let other_group_id = other[0].installment_group_id.as_deref().unwrap();
+
+        delete_installment_transactions_db(&fixture.db, created[4].id, "from_current").unwrap();
+
+        let connection = fixture.db.open().unwrap();
+        let remaining = connection
+            .prepare("SELECT installment_number FROM transactions WHERE installment_group_id=?1 ORDER BY installment_number")
+            .unwrap()
+            .query_map([group_id], |row| row.get::<_, u32>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let other_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE installment_group_id=?1",
+                [other_group_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, vec![1, 2, 3, 4]);
+        assert_eq!(other_count, 3);
+        drop(connection);
+        cleanup_installment_fixture(fixture);
+    }
+
+    #[test]
+    fn deleting_all_twelve_installments_recalculates_invoices_and_dashboard() {
+        let fixture = installment_fixture();
+        let created = create_test_installments(&fixture, "Compra anual", 120_000, 12, "2026-11");
+        let other = create_test_installments(&fixture, "Compra preservada", 25_000, 3, "2028-01");
+        let group_id = created[0].installment_group_id.as_deref().unwrap();
+        let other_group_id = other[0].installment_group_id.as_deref().unwrap();
+        let first_invoice_id = created[0].invoice_id.unwrap();
+        let connection = fixture.db.open().unwrap();
+        let invoice_before = invoices::get_invoice_db(&connection, first_invoice_id).unwrap();
+        let dashboard_before = dashboard::build_dashboard(&connection, "2026-12").unwrap();
+        assert_eq!(invoice_before.transactions_total_cents, 10_000);
+        assert_eq!(dashboard_before.projected_card_invoices_cents, 10_000);
+        drop(connection);
+
+        delete_installment_transactions_db(&fixture.db, created[0].id, "all").unwrap();
+
+        let connection = fixture.db.open().unwrap();
+        let remaining_group_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE installment_group_id=?1",
+                [group_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let other_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE installment_group_id=?1",
+                [other_group_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let invoice_after = invoices::get_invoice_db(&connection, first_invoice_id).unwrap();
+        let dashboard_after = dashboard::build_dashboard(&connection, "2026-12").unwrap();
+        let future_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE description='Compra anual' AND fiscal_month>='2026-11'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_group_count, 0);
+        assert_eq!(future_rows, 0);
+        assert_eq!(other_count, 3);
+        assert_eq!(invoice_after.transactions_total_cents, 0);
+        assert_eq!(invoice_after.transaction_count, 0);
+        assert_eq!(dashboard_after.projected_card_invoices_cents, 0);
+        drop(connection);
+        cleanup_installment_fixture(fixture);
+    }
+
+    #[test]
+    fn installment_delete_command_prioritizes_recurring_occurrence_safety() {
+        let fixture = installment_fixture();
+        let connection = fixture.db.open().unwrap();
+        let account_id = connection
+            .query_row("SELECT id FROM accounts LIMIT 1", [], |row| row.get(0))
+            .unwrap();
+        drop(connection);
+        let item = recurring::create_recurring_item_db(
+            &fixture.db,
+            RecurringItemInput {
+                name: "Fixo protegido".into(),
+                item_type: "expense".into(),
+                category_id: None,
+                account_id,
+                default_amount_cents: 10_000,
+                due_day: 5,
+                start_month: "2026-11".into(),
+                end_month: None,
+                active: true,
+                notes: None,
+            },
+        )
+        .unwrap();
+        let occurrence =
+            recurring::ensure_recurring_occurrences_for_month_db(&fixture.db, "2026-11")
+                .unwrap()
+                .remove(0);
+        fixture.db.open().unwrap().execute(
+            "UPDATE transactions SET installment_group_id='grupo-improvavel', installment_number=1, installment_total=12 WHERE id=?1",
+            [occurrence.transaction_id],
+        ).unwrap();
+
+        delete_installment_transactions_db(&fixture.db, occurrence.transaction_id, "all").unwrap();
+
+        let connection = fixture.db.open().unwrap();
+        let statuses: (String, String) = connection
+            .query_row(
+                "SELECT o.status, t.status FROM recurring_occurrences o JOIN transactions t ON t.id=o.transaction_id WHERE o.id=?1",
+                [occurrence.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let item_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM recurring_items WHERE id=?1)",
+                [item.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(statuses, ("cancelled".into(), "cancelled".into()));
+        assert!(item_exists);
+        drop(connection);
+        cleanup_installment_fixture(fixture);
     }
 
     #[test]

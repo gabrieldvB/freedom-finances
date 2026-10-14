@@ -15,7 +15,8 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
   const [cards, setCards] = useState<Card[]>([]);
   const [editing, setEditing] = useState<Transaction | "new" | null>(null);
   const [installmentOpen, setInstallmentOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [installmentToDelete, setInstallmentToDelete] = useState<Transaction | null>(null);
+  const [statusFilter, setStatusFilter] = useState("active");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -30,7 +31,11 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
   }, [fiscalMonth]);
 
   useEffect(() => { void load(); }, [load]);
-  const filtered = useMemo(() => statusFilter === "all" ? rows : rows.filter((row) => row.status === statusFilter), [rows, statusFilter]);
+  const filtered = useMemo(() => {
+    if (statusFilter === "active") return rows.filter((row) => row.status !== "cancelled");
+    if (statusFilter === "all") return rows;
+    return rows.filter((row) => row.status === statusFilter);
+  }, [rows, statusFilter]);
 
   async function changeStatus(row: Transaction, status: TransactionStatus) {
     if (row.recurringOccurrenceId && status === "cancelled" && !window.confirm("Este lançamento foi gerado por um fixo. Deseja remover apenas esta ocorrência mensal? O fixo continuará ativo nos próximos meses.")) return;
@@ -47,6 +52,10 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
       try { await api.cancelRecurringOccurrence(row.recurringOccurrenceId); await load(); } catch (err) { setError(errorMessage(err)); }
       return;
     }
+    if (row.installmentGroupId) {
+      setInstallmentToDelete(row);
+      return;
+    }
     if (!window.confirm(`Excluir definitivamente “${row.description}”?`)) return;
     try { await api.deleteTransaction(row.id); await load(); } catch (err) { setError(errorMessage(err)); }
   }
@@ -54,11 +63,38 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
   return <>
     <PageHeader title="Lançamentos" subtitle="Receitas, despesas e compras parceladas." actions={<><MonthPicker value={fiscalMonth} onChange={onMonthChange} /><button className="secondary" onClick={() => setInstallmentOpen(true)}><CreditCard size={17} /> Compra parcelada</button><button className="primary" onClick={() => setEditing("new")}><Plus size={17} /> Novo</button></>} />
     {error && <Notice type="error">{error}</Notice>}
-    <div className="toolbar"><label>Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">Todos</option><option value="open">Em aberto</option><option value="paid">Pago</option><option value="cancelled">Cancelado</option></select></label><span>{filtered.length} lançamento(s)</span></div>
+    <div className="toolbar"><label>Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="active">Ativos</option><option value="all">Todos</option><option value="open">Em aberto</option><option value="paid">Pago</option><option value="cancelled">Cancelados</option></select></label><span>{filtered.length} lançamento(s)</span></div>
     <section className="panel">{loading ? <Spinner /> : <TransactionTable rows={filtered} onEdit={setEditing} onStatus={changeStatus} onDelete={remove} />}</section>
     {editing && <TransactionForm transaction={editing === "new" ? null : editing} fiscalMonth={defaultFiscalMonth} accounts={accounts} categories={categories} cards={cards} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
     {installmentOpen && <InstallmentForm fiscalMonth={defaultFiscalMonth} categories={categories} cards={cards} onClose={() => setInstallmentOpen(false)} onSaved={async () => { setInstallmentOpen(false); await load(); }} />}
+    {installmentToDelete && <InstallmentDeleteModal transaction={installmentToDelete} onClose={() => setInstallmentToDelete(null)} onDeleted={async () => { setInstallmentToDelete(null); await load(); }} />}
   </>;
+}
+
+function InstallmentDeleteModal({ transaction, onClose, onDeleted }: { transaction: Transaction; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+
+  async function remove(scope: "single" | "from_current" | "all") {
+    setDeleting(true); setError("");
+    try {
+      await api.deleteInstallmentTransactions(transaction.id, scope);
+      await onDeleted();
+    }
+    catch (err) { setError(errorMessage(err)); setDeleting(false); }
+  }
+
+  return <Modal title="Excluir compra parcelada" onClose={() => { if (!deleting) onClose(); }}>
+    {error && <Notice type="error">{error}</Notice>}
+    <p>Esta compra é parcelada. O que deseja excluir?</p>
+    <p className="form-hint">{transaction.description} · parcela {transaction.installmentNumber}/{transaction.installmentTotal}</p>
+    <div className="installment-delete-options">
+      <button className="secondary" disabled={deleting} onClick={() => void remove("single")}>Somente esta parcela</button>
+      <button className="secondary" disabled={deleting} onClick={() => void remove("from_current")}>Esta e as próximas</button>
+      <button className="danger-button" disabled={deleting} onClick={() => void remove("all")}>Toda a compra parcelada</button>
+      <button className="ghost" disabled={deleting} onClick={onClose}>Cancelar</button>
+    </div>
+  </Modal>;
 }
 
 function TransactionForm({ transaction, fiscalMonth, accounts, categories, cards, onClose, onSaved }: { transaction: Transaction | null; fiscalMonth: string; accounts: Account[]; categories: Category[]; cards: Card[]; onClose: () => void; onSaved: () => Promise<void> }) {

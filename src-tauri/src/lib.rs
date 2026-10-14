@@ -32,6 +32,7 @@ pub fn run() {
             transactions::update_transaction,
             transactions::set_transaction_status,
             transactions::delete_transaction,
+            transactions::delete_installment_transactions,
             transactions::create_installments,
             commands::list_accounts,
             commands::create_account,

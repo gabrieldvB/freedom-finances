@@ -38,6 +38,8 @@ export const api = {
   setTransactionStatus: (id: number, status: TransactionStatus) =>
     invoke<void>("set_transaction_status", { id, status }),
   deleteTransaction: (id: number) => invoke<void>("delete_transaction", { id }),
+  deleteInstallmentTransactions: (transactionId: number, scope: "single" | "from_current" | "all") =>
+    invoke<void>("delete_installment_transactions", { transactionId, scope }),
   createInstallments: (input: InstallmentInput) =>
     invoke<Transaction[]>("create_installments", { input }),
 
