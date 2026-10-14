@@ -78,6 +78,7 @@ pub struct TransactionDto {
     pub installment_number: Option<i64>,
     pub installment_total: Option<i64>,
     pub notes: Option<String>,
+    pub recurring_occurrence_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,11 +227,23 @@ pub struct DashboardDto {
     pub balance_cents: i64,
     pub open_cents: i64,
     pub paid_cents: i64,
+    pub received_cents: i64,
+    pub opening_balance_cents: i64,
+    pub realized_balance_cents: i64,
+    pub projected_accumulated_balance_cents: i64,
     pub open_invoices_total_cents: i64,
     pub open_invoices: Vec<InvoiceDto>,
     pub upcoming_invoices: Vec<InvoiceDto>,
     pub category_totals: Vec<CategoryTotalDto>,
     pub recent_transactions: Vec<TransactionDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonthlyBalanceDto {
+    pub fiscal_month: String,
+    pub opening_balance_cents: i64,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

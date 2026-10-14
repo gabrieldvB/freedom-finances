@@ -10,6 +10,7 @@ import type {
   Invoice,
   InvoiceGroups,
   InvoiceStatus,
+  MonthlyBalance,
   RecurringItem,
   RecurringItemInput,
   RecurringOccurrence,
@@ -91,6 +92,8 @@ export const api = {
       : { input: item }),
   setRecurringItemActive: (id: number, active: boolean) =>
     invoke<RecurringItem>("set_recurring_item_active", { id, active }),
+  deactivateRecurringItem: (id: number) =>
+    invoke<RecurringItem>("deactivate_recurring_item", { id }),
   listRecurringOccurrences: (fiscalMonth: string) =>
     invoke<RecurringOccurrence[]>("list_recurring_occurrences", { fiscalMonth }),
   ensureRecurringOccurrences: (fiscalMonth: string) =>
@@ -99,6 +102,13 @@ export const api = {
     invoke<RecurringOccurrence>("update_recurring_occurrence", { id, amountCents, notes }),
   setRecurringOccurrenceStatus: (id: number, status: TransactionStatus) =>
     invoke<RecurringOccurrence>("set_recurring_occurrence_status", { id, status }),
+  cancelRecurringOccurrence: (id: number) =>
+    invoke<RecurringOccurrence>("cancel_recurring_occurrence", { id }),
+
+  getMonthlyBalance: (fiscalMonth: string) =>
+    invoke<MonthlyBalance>("get_monthly_balance", { fiscalMonth }),
+  setMonthlyBalance: (fiscalMonth: string, openingBalanceCents: number, notes: string | null) =>
+    invoke<MonthlyBalance>("set_monthly_balance", { fiscalMonth, openingBalanceCents, notes }),
 
   getPaths: () => invoke<AppPaths>("get_app_paths"),
   backup: () => invoke<string>("create_backup"),

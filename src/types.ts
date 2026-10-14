@@ -48,6 +48,7 @@ export interface Transaction {
   installmentNumber: number | null;
   installmentTotal: number | null;
   notes: string | null;
+  recurringOccurrenceId: number | null;
 }
 
 export interface Invoice {
@@ -150,11 +151,21 @@ export interface DashboardData {
   balanceCents: number;
   openCents: number;
   paidCents: number;
+  receivedCents: number;
+  openingBalanceCents: number;
+  realizedBalanceCents: number;
+  projectedAccumulatedBalanceCents: number;
   openInvoicesTotalCents: number;
   openInvoices: Invoice[];
   upcomingInvoices: Invoice[];
   categoryTotals: CategoryTotal[];
   recentTransactions: Transaction[];
+}
+
+export interface MonthlyBalance {
+  fiscalMonth: string;
+  openingBalanceCents: number;
+  notes: string | null;
 }
 
 export interface AppPaths {

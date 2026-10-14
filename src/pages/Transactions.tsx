@@ -33,10 +33,20 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
   const filtered = useMemo(() => statusFilter === "all" ? rows : rows.filter((row) => row.status === statusFilter), [rows, statusFilter]);
 
   async function changeStatus(row: Transaction, status: TransactionStatus) {
-    try { await api.setTransactionStatus(row.id, status); await load(); } catch (err) { setError(errorMessage(err)); }
+    if (row.recurringOccurrenceId && status === "cancelled" && !window.confirm("Cancelar esta ocorrência do mês? O lançamento vinculado também será cancelado.")) return;
+    try {
+      if (row.recurringOccurrenceId) await api.setRecurringOccurrenceStatus(row.recurringOccurrenceId, status);
+      else await api.setTransactionStatus(row.id, status);
+      await load();
+    } catch (err) { setError(errorMessage(err)); }
   }
 
   async function remove(row: Transaction) {
+    if (row.recurringOccurrenceId) {
+      if (!window.confirm("Cancelar esta ocorrência do mês? O lançamento vinculado também será cancelado.")) return;
+      try { await api.cancelRecurringOccurrence(row.recurringOccurrenceId); await load(); } catch (err) { setError(errorMessage(err)); }
+      return;
+    }
     if (!window.confirm(`Excluir definitivamente “${row.description}”?`)) return;
     try { await api.deleteTransaction(row.id); await load(); } catch (err) { setError(errorMessage(err)); }
   }

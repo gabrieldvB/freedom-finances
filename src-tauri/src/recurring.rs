@@ -429,6 +429,21 @@ pub fn set_recurring_occurrence_status_db(
     get_occurrence_db(&connection, id)
 }
 
+#[tauri::command]
+pub fn cancel_recurring_occurrence(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<RecurringOccurrenceDto, String> {
+    cancel_recurring_occurrence_db(&state.db, id)
+}
+
+pub fn cancel_recurring_occurrence_db(
+    db: &Database,
+    id: i64,
+) -> Result<RecurringOccurrenceDto, String> {
+    set_recurring_occurrence_status_db(db, id, "cancelled")
+}
+
 fn get_occurrence_db(connection: &Connection, id: i64) -> Result<RecurringOccurrenceDto, String> {
     let sql = format!("{OCCURRENCE_SELECT} WHERE o.id=?1");
     connection
@@ -796,7 +811,7 @@ mod tests {
             .unwrap()
             .remove(0);
         assert_eq!(
-            set_recurring_occurrence_status_db(&fixture.db, occurrence.id, "cancelled")
+            cancel_recurring_occurrence_db(&fixture.db, occurrence.id)
                 .unwrap()
                 .status,
             "cancelled"

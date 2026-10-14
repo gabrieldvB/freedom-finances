@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ExternalLink, Pencil, Plus, RotateCcw, Trash2, WandSparkles, XCircle } from "lucide-react";
+import { Check, ExternalLink, Pencil, Plus, PowerOff, RotateCcw, WandSparkles, XCircle } from "lucide-react";
 import { MonthPicker } from "../components/MonthPicker";
 import { Modal, Notice, PageHeader, Spinner, StatusBadge } from "../components/Ui";
 import { api, errorMessage } from "../lib/api";
@@ -51,14 +51,19 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
     }
   }
 
-  async function remove(item: RecurringItem) {
-    if (!window.confirm("Tem certeza que deseja excluir este fixo? As ocorrências já criadas serão mantidas no histórico, mas ele não será mais gerado nos próximos meses.")) return;
+  async function deactivate(item: RecurringItem) {
+    if (!window.confirm("Tem certeza que deseja desativar este fixo? As ocorrências e lançamentos já criados serão mantidos no histórico, mas ele não será mais gerado nos próximos meses.")) return;
     try { await api.deactivateRecurringItem(item.id); await load(); }
     catch (err) { setNotice({ type: "error", text: errorMessage(err) }); }
   }
 
   async function changeStatus(row: RecurringOccurrence, status: TransactionStatus) {
-    try { await api.setRecurringOccurrenceStatus(row.id, status); await load(); }
+    if (status === "cancelled" && !window.confirm("Cancelar esta ocorrência do mês? O lançamento vinculado também será cancelado.")) return;
+    try {
+      if (status === "cancelled") await api.cancelRecurringOccurrence(row.id);
+      else await api.setRecurringOccurrenceStatus(row.id, status);
+      await load();
+    }
     catch (err) { setNotice({ type: "error", text: errorMessage(err) }); }
   }
 
@@ -72,7 +77,7 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
       </div>
       <section className="panel recurring-models">
         <div className="panel-title"><div><h2>Modelos cadastrados</h2><p>Alterar o valor padrão não modifica ocorrências já geradas.</p></div></div>
-        {items.length ? <div className="recurring-model-list">{items.map((item) => <div key={item.id}><span><strong>{item.name}</strong><small>{item.type === "income" ? "Receita" : "Despesa"} · dia {item.dueDay} · desde {formatMonth(item.startMonth)}{item.endMonth ? ` até ${formatMonth(item.endMonth)}` : ""}</small></span><strong>{formatMoney(item.defaultAmountCents)}</strong><div className="row-actions"><button className="icon-button" title="Editar modelo" onClick={() => setEditingItem(item)}><Pencil size={16} /></button><button className="icon-button danger" title="Excluir fixo" onClick={() => void remove(item)}><Trash2 size={16} /></button></div></div>)}</div> : <p className="muted">Nenhum fixo ativo cadastrado.</p>}
+        {items.length ? <div className="recurring-model-list">{items.map((item) => <div key={item.id}><span><strong>{item.name}</strong><small>{item.type === "income" ? "Receita" : "Despesa"} · dia {item.dueDay} · desde {formatMonth(item.startMonth)}{item.endMonth ? ` até ${formatMonth(item.endMonth)}` : ""}</small></span><strong>{formatMoney(item.defaultAmountCents)}</strong><div className="row-actions"><button className="icon-button" title="Editar modelo" onClick={() => setEditingItem(item)}><Pencil size={16} /></button><button className="icon-button danger" title="Desativar fixo" onClick={() => void deactivate(item)}><PowerOff size={16} /></button></div></div>)}</div> : <p className="muted">Nenhum fixo ativo cadastrado.</p>}
       </section>
     </>}
     {editingItem && <RecurringItemForm item={editingItem === "new" ? null : editingItem} defaultFiscalMonth={defaultFiscalMonth} accounts={accounts} categories={categories} onClose={() => setEditingItem(null)} onSaved={async () => { setEditingItem(null); await load(); }} />}
@@ -86,7 +91,7 @@ function OccurrenceSection({ title, rows, onEdit, onStatus, onOpenTransactions }
     <span><small>Previsão</small><strong>{formatDate(row.dueDate)}</strong></span>
     <strong className={row.type === "income" ? "amount-income" : "amount-expense"}>{formatMoney(row.amountCents)}</strong>
     <StatusBadge status={row.status} />
-    <div className="row-actions"><button className="icon-button" title="Editar valor do mês" onClick={() => onEdit(row)}><Pencil size={16} /></button>{row.status !== "paid" && <button className="icon-button success" title={row.type === "income" ? "Marcar como recebido" : "Marcar como pago"} onClick={() => void onStatus(row, "paid")}><Check size={16} /></button>}{row.status !== "open" && <button className="icon-button warning" title="Reabrir" onClick={() => void onStatus(row, "open")}><RotateCcw size={16} /></button>}{row.status !== "cancelled" && <button className="icon-button danger" title="Cancelar" onClick={() => void onStatus(row, "cancelled")}><XCircle size={16} /></button>}<button className="icon-button" title="Abrir lançamentos" onClick={onOpenTransactions}><ExternalLink size={16} /></button></div>
+    <div className="row-actions"><button className="icon-button" title="Editar valor do mês" onClick={() => onEdit(row)}><Pencil size={16} /></button>{row.status !== "paid" && <button className="icon-button success" title={row.type === "income" ? "Marcar como recebido" : "Marcar como pago"} onClick={() => void onStatus(row, "paid")}><Check size={16} /></button>}{row.status !== "open" && <button className="icon-button warning" title="Reabrir" onClick={() => void onStatus(row, "open")}><RotateCcw size={16} /></button>}{row.status !== "cancelled" && <button className="icon-button danger" title="Cancelar ocorrência" onClick={() => void onStatus(row, "cancelled")}><XCircle size={16} /></button>}<button className="icon-button" title="Abrir lançamentos" onClick={onOpenTransactions}><ExternalLink size={16} /></button></div>
   </div>)}</div> : <p className="muted">Nenhuma ocorrência gerada para este mês.</p>}</section>;
 }
 

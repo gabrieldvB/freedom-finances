@@ -1,5 +1,5 @@
 use chrono::{Datelike, NaiveDate};
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use tauri::State;
 use uuid::Uuid;
 
@@ -14,11 +14,12 @@ const TRANSACTION_SELECT: &str = r#"
 SELECT t.id, t.description, t.amount_cents, t.type, t.status, t.transaction_date,
        t.fiscal_month, t.account_id, a.name, t.credit_card_id, cc.name,
        t.invoice_id, t.category_id, cat.name, t.installment_group_id,
-       t.installment_number, t.installment_total, t.notes
+       t.installment_number, t.installment_total, t.notes, ro.id
 FROM transactions t
 LEFT JOIN accounts a ON a.id=t.account_id
 LEFT JOIN credit_cards cc ON cc.id=t.credit_card_id
 LEFT JOIN categories cat ON cat.id=t.category_id
+LEFT JOIN recurring_occurrences ro ON ro.transaction_id=t.id
 "#;
 
 fn map_transaction(row: &Row<'_>) -> rusqlite::Result<TransactionDto> {
@@ -41,6 +42,7 @@ fn map_transaction(row: &Row<'_>) -> rusqlite::Result<TransactionDto> {
         installment_number: row.get(15)?,
         installment_total: row.get(16)?,
         notes: row.get(17)?,
+        recurring_occurrence_id: row.get(18)?,
     })
 }
 
@@ -176,29 +178,57 @@ pub fn set_transaction_status(
     id: i64,
     status: String,
 ) -> Result<(), String> {
-    if !["open", "paid", "cancelled"].contains(&status.as_str()) {
+    set_transaction_status_db(&state.db, id, &status)
+}
+
+pub fn set_transaction_status_db(db: &Database, id: i64, status: &str) -> Result<(), String> {
+    if !["open", "paid", "cancelled"].contains(&status) {
         return Err("Status inválido.".into());
     }
-    let connection = state.db.open().map_err(|e| e.to_string())?;
-    let changed = connection
+    let mut connection = db.open().map_err(|e| e.to_string())?;
+    let transaction = connection.transaction().map_err(|e| e.to_string())?;
+    let changed = transaction
         .execute(
             "UPDATE transactions SET status=?1, updated_at=CURRENT_TIMESTAMP WHERE id=?2",
-            (&status, id),
+            (status, id),
         )
         .map_err(|e| e.to_string())?;
     if changed == 0 {
-        Err("Lançamento não encontrado.".into())
-    } else {
-        Ok(())
+        return Err("Lançamento não encontrado.".into());
     }
+    transaction
+        .execute(
+            "UPDATE recurring_occurrences SET status=?1, updated_at=CURRENT_TIMESTAMP WHERE transaction_id=?2",
+            (status, id),
+        )
+        .map_err(|e| e.to_string())?;
+    transaction.commit().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_transaction(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    let connection = state.db.open().map_err(|e| e.to_string())?;
+    delete_transaction_db(&state.db, id)
+}
+
+pub fn delete_transaction_db(db: &Database, id: i64) -> Result<(), String> {
+    let connection = db.open().map_err(|e| e.to_string())?;
+    let recurring_occurrence_id = connection
+        .query_row(
+            "SELECT id FROM recurring_occurrences WHERE transaction_id=?1",
+            [id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|_| "Não foi possível verificar o histórico do lançamento.".to_string())?;
+    if recurring_occurrence_id.is_some() {
+        return Err("Este lançamento pertence a um fixo e já possui histórico. Para preservar seus dados, cancele a ocorrência.".into());
+    }
     let changed = connection
         .execute("DELETE FROM transactions WHERE id=?1", [id])
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| {
+            "Não foi possível excluir o lançamento porque ele possui histórico vinculado."
+                .to_string()
+        })?;
     if changed == 0 {
         Err("Lançamento não encontrado.".into())
     } else {
@@ -280,7 +310,7 @@ pub fn create_installments_db(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backup, db::Database, invoices};
+    use crate::{backup, commands::RecurringItemInput, db::Database, invoices, recurring};
 
     #[test]
     fn splits_cents_without_losing_remainder() {
@@ -352,6 +382,50 @@ mod tests {
             .unwrap();
         assert_eq!(integrity, "ok");
         drop(backup_connection);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_transaction_with_recurring_history_returns_a_friendly_error() {
+        let root = std::env::temp_dir().join(format!(
+            "freedom-finances-protected-transaction-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = Database::at(root.join("test.db")).unwrap();
+        let connection = db.open().unwrap();
+        let account_id = connection
+            .query_row("SELECT id FROM accounts LIMIT 1", [], |row| row.get(0))
+            .unwrap();
+        drop(connection);
+        recurring::create_recurring_item_db(
+            &db,
+            RecurringItemInput {
+                name: "Salário".into(),
+                item_type: "income".into(),
+                category_id: None,
+                account_id,
+                default_amount_cents: 300_000,
+                due_day: 5,
+                start_month: "2026-11".into(),
+                end_month: None,
+                active: true,
+                notes: None,
+            },
+        )
+        .unwrap();
+        let occurrence = recurring::ensure_recurring_occurrences_for_month_db(&db, "2026-11")
+            .unwrap()
+            .remove(0);
+
+        let error = delete_transaction_db(&db, occurrence.transaction_id).unwrap_err();
+
+        assert!(error.contains("já possui histórico"));
+        assert!(!error.contains("FOREIGN KEY"));
+        let saved = list_transactions_db(&db.open().unwrap(), "2026-11").unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].recurring_occurrence_id, Some(occurrence.id));
+        drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
