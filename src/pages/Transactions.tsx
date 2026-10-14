@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CreditCard, Plus } from "lucide-react";
+import { AlertTriangle, CreditCard, Plus, ReceiptText } from "lucide-react";
 import { MonthPicker } from "../components/MonthPicker";
 import { TransactionTable } from "../components/TransactionTable";
 import { Modal, Notice, PageHeader, Spinner } from "../components/Ui";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { api, errorMessage } from "../lib/api";
 import { today } from "../lib/dates";
 import { moneyInput, parseMoney } from "../lib/money";
@@ -16,6 +17,8 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
   const [editing, setEditing] = useState<Transaction | "new" | null>(null);
   const [installmentOpen, setInstallmentOpen] = useState(false);
   const [installmentToDelete, setInstallmentToDelete] = useState<Transaction | null>(null);
+  const [transactionToDelete, setTransactionToDelete] = useState<Transaction | null>(null);
+  const [deletingTransaction, setDeletingTransaction] = useState(false);
   const [statusFilter, setStatusFilter] = useState("active");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -38,7 +41,6 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
   }, [rows, statusFilter]);
 
   async function changeStatus(row: Transaction, status: TransactionStatus) {
-    if (row.recurringOccurrenceId && status === "cancelled" && !window.confirm("Este lançamento foi gerado por um fixo. Deseja remover apenas esta ocorrência mensal? O fixo continuará ativo nos próximos meses.")) return;
     try {
       if (row.recurringOccurrenceId) await api.setRecurringOccurrenceStatus(row.recurringOccurrenceId, status);
       else await api.setTransactionStatus(row.id, status);
@@ -48,16 +50,27 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
 
   async function remove(row: Transaction) {
     if (row.recurringOccurrenceId) {
-      if (!window.confirm("Este lançamento foi gerado por um fixo. Deseja remover apenas esta ocorrência mensal? O fixo continuará ativo nos próximos meses.")) return;
-      try { await api.cancelRecurringOccurrence(row.recurringOccurrenceId); await load(); } catch (err) { setError(errorMessage(err)); }
+      setTransactionToDelete(row);
       return;
     }
     if (row.installmentGroupId) {
       setInstallmentToDelete(row);
       return;
     }
-    if (!window.confirm(`Excluir definitivamente “${row.description}”?`)) return;
-    try { await api.deleteTransaction(row.id); await load(); } catch (err) { setError(errorMessage(err)); }
+    setTransactionToDelete(row);
+  }
+
+  async function confirmTransactionRemoval() {
+    if (!transactionToDelete) return;
+    setDeletingTransaction(true); setError("");
+    try {
+      if (transactionToDelete.recurringOccurrenceId) await api.cancelRecurringOccurrence(transactionToDelete.recurringOccurrenceId);
+      else await api.deleteTransaction(transactionToDelete.id);
+      setTransactionToDelete(null);
+      await load();
+    }
+    catch (err) { setError(errorMessage(err)); }
+    finally { setDeletingTransaction(false); }
   }
 
   return <>
@@ -68,6 +81,7 @@ export default function Transactions({ fiscalMonth, defaultFiscalMonth, onMonthC
     {editing && <TransactionForm transaction={editing === "new" ? null : editing} fiscalMonth={defaultFiscalMonth} accounts={accounts} categories={categories} cards={cards} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
     {installmentOpen && <InstallmentForm fiscalMonth={defaultFiscalMonth} categories={categories} cards={cards} onClose={() => setInstallmentOpen(false)} onSaved={async () => { setInstallmentOpen(false); await load(); }} />}
     {installmentToDelete && <InstallmentDeleteModal transaction={installmentToDelete} onClose={() => setInstallmentToDelete(null)} onDeleted={async () => { setInstallmentToDelete(null); await load(); }} />}
+    {transactionToDelete && <ConfirmDialog title={transactionToDelete.recurringOccurrenceId ? "Remover ocorrência deste mês?" : "Excluir lançamento?"} description={transactionToDelete.recurringOccurrenceId ? "Este lançamento foi gerado por um fixo. Somente esta ocorrência mensal será removida; o fixo continuará ativo nos próximos meses." : `O lançamento “${transactionToDelete.description}” será excluído definitivamente.`} confirmLabel={transactionToDelete.recurringOccurrenceId ? "Remover deste mês" : "Excluir lançamento"} variant="danger" busy={deletingTransaction} onConfirm={() => void confirmTransactionRemoval()} onCancel={() => setTransactionToDelete(null)} />}
   </>;
 }
 
@@ -84,7 +98,7 @@ function InstallmentDeleteModal({ transaction, onClose, onDeleted }: { transacti
     catch (err) { setError(errorMessage(err)); setDeleting(false); }
   }
 
-  return <Modal title="Excluir compra parcelada" onClose={() => { if (!deleting) onClose(); }}>
+  return <Modal title="Excluir compra parcelada" description="Escolha o alcance da exclusão antes de continuar." icon={<AlertTriangle size={20} />} onClose={() => { if (!deleting) onClose(); }}>
     {error && <Notice type="error">{error}</Notice>}
     <p>Esta compra é parcelada. O que deseja excluir?</p>
     <p className="form-hint">{transaction.description} · parcela {transaction.installmentNumber}/{transaction.installmentTotal}</p>
@@ -123,7 +137,7 @@ function TransactionForm({ transaction, fiscalMonth, accounts, categories, cards
   }
 
   const categoryOptions = categories.filter((row) => row.active && row.type === (type === "income" ? "income" : "expense"));
-  return <Modal title={transaction ? "Editar lançamento" : "Novo lançamento"} onClose={onClose}>
+  return <Modal title={transaction ? "Editar lançamento" : "Novo lançamento"} description="Registre receitas, despesas e transferências do mês." icon={<ReceiptText size={20} />} onClose={onClose}>
     <form onSubmit={submit} className="form-grid">
       {error && <div className="notice notice-error full">{error}</div>}
       <label className="full">Descrição<input value={description} onChange={(e) => setDescription(e.target.value)} autoFocus /></label>
@@ -155,7 +169,7 @@ function InstallmentForm({ fiscalMonth, categories, cards, onClose, onSaved }: {
     setSaving(true); setError("");
     try { await api.createInstallments(input); await onSaved(); } catch (err) { setError(errorMessage(err)); } finally { setSaving(false); }
   }
-  return <Modal title="Nova compra parcelada" onClose={onClose}>
+  return <Modal title="Nova compra parcelada" description="As parcelas serão distribuídas automaticamente nos próximos meses." icon={<CreditCard size={20} />} onClose={onClose}>
     <form onSubmit={submit} className="form-grid">
       {error && <div className="notice notice-error full">{error}</div>}
       <label className="full">Descrição<input value={description} onChange={(e) => setDescription(e.target.value)} autoFocus /></label>

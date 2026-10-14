@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDownCircle, ArrowUpCircle, CalendarCheck2, CircleDollarSign, CreditCard, Landmark, Plus, Scale, TrendingUp, Wallet } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, CalendarCheck2, CircleDollarSign, CreditCard, Info, Landmark, PieChart, Plus, ReceiptText, Scale, TrendingUp, Wallet } from "lucide-react";
 import type { Page } from "../App";
 import { MonthPicker } from "../components/MonthPicker";
 import { TransactionTable } from "../components/TransactionTable";
@@ -42,16 +42,16 @@ export default function Dashboard({ fiscalMonth, defaultFiscalMonth, onMonthChan
       {notice && <Notice type="success">{notice}</Notice>}
       {!data ? <Spinner /> : <>
         <section className="metric-grid">
-          <Metric label="Receitas previstas" value={data.projectedIncomeCents} icon={<ArrowUpCircle />} tone="positive" />
-          <Metric label="Despesas diretas previstas" value={data.projectedDirectExpensesCents} icon={<ArrowDownCircle />} tone="negative" />
-          <Metric label="Faturas previstas" value={data.projectedCardInvoicesCents} icon={<CreditCard />} tone="card" />
-          <Metric label="Resultado projetado do mês" value={data.projectedBalanceCents} icon={<Scale />} tone={data.projectedBalanceCents >= 0 ? "positive" : "negative"} help="Considera receitas, despesas e faturas previstas, independentemente de já estarem pagas." />
-          <Metric label="Receitas recebidas" value={data.realizedIncomeCents} icon={<CircleDollarSign />} tone="positive" />
-          <Metric label="Despesas pagas" value={data.realizedDirectExpensesCents} icon={<Wallet />} tone="negative" />
-          <Metric label="Faturas pagas" value={data.realizedCardInvoicesCents} icon={<CreditCard />} tone="card" />
-          <Metric label="Resultado realizado do mês" value={data.realizedMonthResultCents} icon={<Wallet />} tone={data.realizedMonthResultCents >= 0 ? "positive" : "negative"} help="Considera apenas receitas recebidas, despesas pagas e faturas pagas." />
-          <Metric label="Saldo acumulado projetado" value={data.projectedAccumulatedBalanceCents} icon={<TrendingUp />} tone={data.projectedAccumulatedBalanceCents >= 0 ? "positive" : "negative"} />
-          <Metric label="Saldo acumulado realizado" value={data.realizedAccumulatedBalanceCents} icon={<Landmark />} tone={data.realizedAccumulatedBalanceCents >= 0 ? "positive" : "negative"} />
+          <Metric label="Receitas previstas" value={data.projectedIncomeCents} icon={<ArrowUpCircle />} tone="positive" subtitle={`Planejado em ${formatMonth(fiscalMonth)}`} />
+          <Metric label="Despesas previstas" value={data.projectedDirectExpensesCents} icon={<ArrowDownCircle />} tone="negative" subtitle="Fora do cartão" />
+          <Metric label="Faturas previstas" value={data.projectedCardInvoicesCents} icon={<CreditCard />} tone="info" subtitle="Com vencimento no mês" />
+          <Metric label="Resultado projetado do mês" value={data.projectedBalanceCents} icon={<Scale />} tone={data.projectedBalanceCents >= 0 ? "positive" : "negative"} subtitle="Resultado do mês" help="Considera receitas, despesas e faturas previstas, independentemente de já estarem pagas." />
+          <Metric label="Receitas recebidas" value={data.realizedIncomeCents} icon={<CircleDollarSign />} tone="positive" subtitle="Confirmadas no mês" />
+          <Metric label="Despesas pagas" value={data.realizedDirectExpensesCents} icon={<Wallet />} tone="negative" subtitle="Pagamentos diretos" />
+          <Metric label="Faturas pagas" value={data.realizedCardInvoicesCents} icon={<CreditCard />} tone="info" subtitle="Confirmadas como pagas" />
+          <Metric label="Resultado realizado do mês" value={data.realizedMonthResultCents} icon={<Wallet />} tone={data.realizedMonthResultCents >= 0 ? "positive" : "negative"} subtitle="Efetivado no mês" help="Considera apenas receitas recebidas, despesas pagas e faturas pagas." />
+          <Metric label="Saldo acumulado projetado" value={data.projectedAccumulatedBalanceCents} icon={<TrendingUp />} tone={data.projectedAccumulatedBalanceCents >= 0 ? "positive" : "negative"} subtitle={`Até ${formatMonth(fiscalMonth)}`} />
+          <Metric label="Saldo acumulado realizado" value={data.realizedAccumulatedBalanceCents} icon={<Landmark />} tone={data.realizedAccumulatedBalanceCents >= 0 ? "positive" : "negative"} subtitle={`Até ${formatMonth(fiscalMonth)}`} />
         </section>
 
         <div className="dashboard-grid">
@@ -65,7 +65,7 @@ export default function Dashboard({ fiscalMonth, defaultFiscalMonth, onMonthChan
                   <div className="bar-track"><div style={{ width: `${Math.max(4, item.totalCents / max * 100)}%`, background: item.color }} /></div>
                 </div>;
               })}
-            </div> : <EmptyState>Sem despesas neste mês.</EmptyState>}
+            </div> : <EmptyState icon={<PieChart size={22} />} title="Nenhuma despesa neste mês" description="Seus gastos categorizados aparecerão aqui." />}
           </section>
           <section className="panel">
             <div className="panel-title"><h2>Faturas abertas</h2><button className="link-button" onClick={() => onNavigate("cards")}>Ver cartões</button></div>
@@ -74,11 +74,11 @@ export default function Dashboard({ fiscalMonth, defaultFiscalMonth, onMonthChan
                 <span><strong>{invoice.creditCard}</strong><small>{formatMonth(invoice.fiscalMonth)} · vence {formatDate(invoice.dueDate)}</small></span>
                 <strong>{formatMoney(invoice.totalCents)}</strong>
               </button>)}
-            </div> : <EmptyState>Nenhuma fatura aberta no mês.</EmptyState>}
+            </div> : <EmptyState icon={<CreditCard size={22} />} title="Nenhuma fatura aberta" description="As faturas abertas e fechadas aparecerão aqui." />}
           </section>
           <section className="panel panel-wide">
             <div className="panel-title"><h2>Próximas faturas</h2></div>
-            {data.upcomingInvoices.length ? <div className="invoice-chips">{data.upcomingInvoices.map((invoice) => <div key={invoice.id}><span>{invoice.creditCard} · {formatMonth(invoice.fiscalMonth)}</span><strong>{formatMoney(invoice.totalCents)}</strong></div>)}</div> : <EmptyState>Nenhuma fatura futura.</EmptyState>}
+            {data.upcomingInvoices.length ? <div className="invoice-chips">{data.upcomingInvoices.map((invoice) => <div key={invoice.id}><span>{invoice.creditCard} · {formatMonth(invoice.fiscalMonth)}</span><strong>{formatMoney(invoice.totalCents)}</strong></div>)}</div> : <EmptyState icon={<ReceiptText size={22} />} title="Nenhuma fatura futura" description="Não há valores programados nos próximos meses." />}
           </section>
           <section className="panel panel-wide">
             <div className="panel-title"><h2>Últimos lançamentos</h2><button className="link-button" onClick={() => onNavigate("transactions")}>Ver todos</button></div>
@@ -91,8 +91,13 @@ export default function Dashboard({ fiscalMonth, defaultFiscalMonth, onMonthChan
   );
 }
 
-function Metric({ label, value, icon, tone = "neutral", help }: { label: string; value: number; icon: React.ReactNode; tone?: string; help?: string }) {
-  return <article className={`metric metric-${tone}`} title={help}><div className="metric-icon">{icon}</div><span>{label}</span><strong>{formatMoney(value)}</strong></article>;
+function Metric({ label, value, icon, tone = "neutral", subtitle, help }: { label: string; value: number; icon: React.ReactNode; tone?: string; subtitle: string; help?: string }) {
+  return <article className={`stat-card stat-card-${tone}`} title={help}>
+    <div className="stat-card-top"><div className="stat-card-icon">{icon}</div>{help && <Info className="stat-help" size={14} />}</div>
+    <span className="stat-card-label">{label}</span>
+    <strong className="stat-card-value">{formatMoney(value)}</strong>
+    <small>{subtitle}</small>
+  </article>;
 }
 
 function InitialBalanceForm({ initialValue, onClose, onSaved }: { initialValue: number; onClose: () => void; onSaved: () => Promise<void> }) {
@@ -121,7 +126,7 @@ function InitialBalanceForm({ initialValue, onClose, onSaved }: { initialValue: 
     }
   }
 
-  return <Modal title="Saldo inicial do controle" onClose={onClose}><form className="form-grid" onSubmit={submit}>
+  return <Modal title="Saldo inicial do controle" description="Defina a base usada nos saldos acumulados." icon={<Landmark size={20} />} onClose={onClose}><form className="form-grid" onSubmit={submit}>
     {error && <div className="notice notice-error full">{error}</div>}
     <label className="full">Saldo inicial (R$)<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" autoFocus /></label>
     <p className="form-hint full">Esse valor é a base única dos saldos acumulados projetado e realizado.</p>

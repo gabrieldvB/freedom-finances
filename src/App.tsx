@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CreditCard, LayoutDashboard, ListChecks, Repeat2, Settings as SettingsIcon, Shapes, WalletCards } from "lucide-react";
+import { CreditCard, LayoutDashboard, ReceiptText, Repeat, Settings as SettingsIcon, Tags } from "lucide-react";
 import { currentFiscalMonth } from "./lib/dates";
 import Dashboard from "./pages/Dashboard";
 import Transactions from "./pages/Transactions";
@@ -14,11 +14,10 @@ export type Page = "dashboard" | "transactions" | "recurring" | "cards" | "categ
 
 const navigation = [
   { id: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
-  { id: "transactions" as const, label: "Lançamentos", icon: ListChecks },
-  { id: "recurring" as const, label: "Fixos", icon: Repeat2 },
-  { id: "cards" as const, label: "Cartões e faturas", icon: WalletCards },
-  { id: "categories" as const, label: "Categorias", icon: Shapes },
-  { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
+  { id: "transactions" as const, label: "Lançamentos", icon: ReceiptText },
+  { id: "recurring" as const, label: "Fixos", icon: Repeat },
+  { id: "cards" as const, label: "Cartões e faturas", icon: CreditCard },
+  { id: "categories" as const, label: "Categorias", icon: Tags },
 ];
 
 export default function App() {
@@ -40,17 +39,20 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><CreditCard size={24} /></div>
-          <div><strong>Freedom</strong><span>Finances</span></div>
+          <div className="brand-mark" aria-hidden="true">💰</div>
+          <div className="brand-copy"><strong>Freedom Finances</strong><span>Controle financeiro local</span></div>
         </div>
-        <nav>
+        <nav className="sidebar-nav" aria-label="Navegação principal">
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button key={id} className={page === id ? "active" : ""} onClick={() => navigate(id)}>
-              <Icon size={19} /> {label}
+            <button key={id} className={`nav-item ${page === id ? "active" : ""}`} onClick={() => navigate(id)}>
+              <span className="nav-icon"><Icon size={18} /></span><span>{label}</span>
             </button>
           ))}
         </nav>
-        <div className="sidebar-footer"><span className="offline-dot" /> Dados locais · offline</div>
+        <div className="sidebar-bottom">
+          <button className={`nav-item ${page === "settings" ? "active" : ""}`} onClick={() => navigate("settings")}><span className="nav-icon"><SettingsIcon size={18} /></span><span>Configurações</span></button>
+          <div className="sidebar-footer"><span className="offline-dot" /><span><strong>Privado e offline</strong><small>Dados neste dispositivo</small></span></div>
+        </div>
       </aside>
       <main className="content">
         {!fiscalMonth || !defaultFiscalMonth ? <Spinner /> : <>

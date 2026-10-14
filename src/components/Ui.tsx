@@ -1,5 +1,9 @@
 import type { PropsWithChildren, ReactNode } from "react";
-import { X } from "lucide-react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
+
+export { EmptyState } from "./ui/EmptyState";
+export { Modal } from "./ui/Modal";
+export { StatusBadge } from "./ui/Badge";
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
   return (
@@ -13,41 +17,10 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   );
 }
 
-export function EmptyState({ children }: PropsWithChildren) {
-  return <div className="empty-state">{children}</div>;
-}
-
-export function Modal({ title, onClose, children, wide = false }: PropsWithChildren<{ title: string; onClose: () => void; wide?: boolean }>) {
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="modal-header">
-          <h2>{title}</h2>
-          <button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={20} /></button>
-        </header>
-        {children}
-      </section>
-    </div>
-  );
-}
-
-export function StatusBadge({ status }: { status: string }) {
-  const labels: Record<string, string> = {
-    open: "Em aberto",
-    paid: "Pago",
-    cancelled: "Cancelado",
-    closed: "Fechada",
-    income: "Receita",
-    expense: "Despesa",
-    transfer: "Transferência",
-  };
-  return <span className={`badge badge-${status}`}>{labels[status] ?? status}</span>;
-}
-
 export function Spinner() {
-  return <div className="loading">Carregando…</div>;
+  return <div className="loading" role="status"><span className="loader" /><span>Carregando dados…</span></div>;
 }
 
 export function Notice({ type, children }: PropsWithChildren<{ type: "success" | "error" }>) {
-  return <div className={`notice notice-${type}`}>{children}</div>;
+  return <div className={`notice notice-${type}`}>{type === "success" ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}<span>{children}</span></div>;
 }

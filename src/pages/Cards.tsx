@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { CreditCard as CardIcon, FilePlus2, Pencil, Plus, Power } from "lucide-react";
-import { Modal, Notice, PageHeader, Spinner, StatusBadge } from "../components/Ui";
+import { EmptyState, Modal, Notice, PageHeader, Spinner, StatusBadge } from "../components/Ui";
 import { MonthPicker } from "../components/MonthPicker";
 import { api, errorMessage } from "../lib/api";
 import { formatDate, formatMonth } from "../lib/dates";
@@ -20,7 +20,7 @@ export default function Cards({ fiscalMonth, defaultFiscalMonth, onMonthChange }
   return <>
     <PageHeader title="Cartões e faturas" subtitle="Acompanhe o presente e os próximos meses." actions={<><MonthPicker value={fiscalMonth} onChange={onMonthChange} /><button className="secondary" disabled={!cards.some((card) => card.active)} onClick={() => setDeclaring(true)}><FilePlus2 size={17} /> Declarar fatura em aberto</button><button className="primary" onClick={() => setEditing("new")}><Plus size={17} /> Novo cartão</button></>} />
     {error && <Notice type="error">{error}</Notice>}
-    {loading ? <Spinner /> : cards.length === 0 ? <section className="panel empty-state">Cadastre seu primeiro cartão para gerar faturas automaticamente.</section> : <div className="cards-stack">
+    {loading ? <Spinner /> : cards.length === 0 ? <section className="panel"><EmptyState icon={<CardIcon size={22} />} title="Nenhum cartão cadastrado" description="Cadastre seu primeiro cartão para gerar e acompanhar faturas automaticamente." action={<button className="primary" onClick={() => setEditing("new")}><Plus size={16} /> Novo cartão</button>} /></section> : <div className="cards-stack">
       {cards.map((card) => <CardSection key={card.id} card={card} currentInvoices={(groups?.currentInvoices ?? []).filter((row) => row.creditCardId === card.id)} openInvoices={(groups?.openInvoices ?? []).filter((row) => row.creditCardId === card.id)} historyInvoices={(groups?.historyInvoices ?? []).filter((row) => row.creditCardId === card.id)} onEdit={() => setEditing(card)} onToggle={() => void toggle(card)} onInvoice={setSelectedInvoice} />)}
     </div>}
     {editing && <CardForm card={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
@@ -54,7 +54,7 @@ function CardForm({ card, onClose, onSaved }: { card: CreditCard | null; onClose
   const [name, setName] = useState(card?.name ?? ""); const [closingDay, setClosingDay] = useState(card?.closingDay ?? 20); const [dueDay, setDueDay] = useState(card?.dueDay ?? 10); const [limit, setLimit] = useState(card ? moneyInput(card.limitCents) : "0,00");
   const [error, setError] = useState(""); const [saving, setSaving] = useState(false);
   async function submit(event: React.FormEvent) { event.preventDefault(); const cents = parseMoney(limit); if (!name.trim()) return setError("Informe o nome."); if (cents === null || cents < 0) return setError("Informe um limite válido."); if (closingDay < 1 || closingDay > 31 || dueDay < 1 || dueDay > 31) return setError("Dias devem estar entre 1 e 31."); setSaving(true); try { await api.saveCard({ id: card?.id, name: name.trim(), closingDay, dueDay, limitCents: cents }); await onSaved(); } catch (err) { setError(errorMessage(err)); } finally { setSaving(false); } }
-  return <Modal title={card ? "Editar cartão" : "Novo cartão"} onClose={onClose}><form className="form-grid" onSubmit={submit}>{error && <div className="notice notice-error full">{error}</div>}<label className="full">Nome<input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label><label>Dia de fechamento<input type="number" min="1" max="31" value={closingDay} onChange={(e) => setClosingDay(Number(e.target.value))} /></label><label>Dia de vencimento<input type="number" min="1" max="31" value={dueDay} onChange={(e) => setDueDay(Number(e.target.value))} /></label><label className="full">Limite (R$)<input value={limit} onChange={(e) => setLimit(e.target.value)} inputMode="decimal" /></label><div className="form-actions full"><button type="button" className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving}>Salvar</button></div></form></Modal>;
+  return <Modal title={card ? "Editar cartão" : "Novo cartão"} description="Informe os dados usados para organizar as faturas." icon={<CardIcon size={20} />} onClose={onClose}><form className="form-grid" onSubmit={submit}>{error && <div className="notice notice-error full">{error}</div>}<label className="full">Nome<input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label><label>Dia de fechamento<input type="number" min="1" max="31" value={closingDay} onChange={(e) => setClosingDay(Number(e.target.value))} /></label><label>Dia de vencimento<input type="number" min="1" max="31" value={dueDay} onChange={(e) => setDueDay(Number(e.target.value))} /></label><label className="full">Limite (R$)<input value={limit} onChange={(e) => setLimit(e.target.value)} inputMode="decimal" /></label><div className="form-actions full"><button type="button" className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar cartão"}</button></div></form></Modal>;
 }
 
 function suggestedDueDate(fiscalMonth: string, card: CreditCard | undefined): string {
@@ -114,7 +114,7 @@ function DeclaredInvoiceForm({ cards, defaultFiscalMonth, onClose, onSaved }: { 
     }
   }
 
-  return <Modal title="Declarar fatura em aberto" onClose={onClose}>
+  return <Modal title="Declarar fatura em aberto" description="Registre um saldo externo sem perder os lançamentos já cadastrados." icon={<FilePlus2 size={20} />} onClose={onClose}>
     <form className="form-grid" onSubmit={submit}>
       {error && <div className="notice notice-error full">{error}</div>}
       <label className="full">Cartão<select value={creditCardId} onChange={(event) => changeCard(Number(event.target.value))} autoFocus>{cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}</select></label>

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarOff, Check, ExternalLink, Pencil, Plus, RotateCcw, Trash2, WandSparkles, XCircle } from "lucide-react";
+import { AlertTriangle, CalendarOff, Check, ExternalLink, Pencil, Plus, Repeat, RotateCcw, Trash2, WandSparkles, XCircle } from "lucide-react";
 import { MonthPicker } from "../components/MonthPicker";
-import { Modal, Notice, PageHeader, Spinner, StatusBadge } from "../components/Ui";
+import { EmptyState, Modal, Notice, PageHeader, Spinner, StatusBadge } from "../components/Ui";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { api, errorMessage } from "../lib/api";
 import { formatDate, formatMonth } from "../lib/dates";
 import { formatMoney, moneyInput, parseMoney } from "../lib/money";
 import type { Account, Category, RecurringItem, RecurringItemInput, RecurringOccurrence, RecurringType, TransactionStatus } from "../types";
 
 const FISCAL_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+type RecurringConfirmAction = { kind: "end"; item: RecurringItem } | { kind: "delete"; item: RecurringItem } | { kind: "cancel"; occurrence: RecurringOccurrence };
 
 export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChange, onOpenTransactions }: { fiscalMonth: string; defaultFiscalMonth: string; onMonthChange: (value: string) => void; onOpenTransactions: () => void }) {
   const [items, setItems] = useState<RecurringItem[]>([]);
@@ -17,6 +19,8 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
   const [editingItem, setEditingItem] = useState<RecurringItem | "new" | null>(null);
   const [editingOccurrence, setEditingOccurrence] = useState<RecurringOccurrence | null>(null);
   const [deletingWithHistory, setDeletingWithHistory] = useState<RecurringItem | null>(null);
+  const [confirmAction, setConfirmAction] = useState<RecurringConfirmAction | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [showCancelled, setShowCancelled] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -56,31 +60,33 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
     }
   }
 
-  async function endFromSelectedMonth(item: RecurringItem) {
-    if (!window.confirm(`Encerrar este fixo a partir de ${formatMonth(fiscalMonth)}? O histórico anterior será mantido. Ocorrências futuras abertas serão canceladas.`)) return;
+  async function confirmRecurringAction() {
+    if (!confirmAction) return;
+    setConfirmBusy(true);
     try {
-      await api.endRecurringItemFromMonth(item.id, fiscalMonth);
-      setNotice({ type: "success", text: `Fixo encerrado a partir de ${formatMonth(fiscalMonth)}.` });
+      if (confirmAction.kind === "end") {
+        await api.endRecurringItemFromMonth(confirmAction.item.id, fiscalMonth);
+        setNotice({ type: "success", text: `Fixo encerrado a partir de ${formatMonth(fiscalMonth)}.` });
+      } else if (confirmAction.kind === "delete") {
+        await api.deleteRecurringItem(confirmAction.item.id);
+        setNotice({ type: "success", text: "Fixo excluído definitivamente." });
+      } else {
+        await api.cancelRecurringOccurrence(confirmAction.occurrence.id);
+      }
+      setConfirmAction(null);
       await load();
     }
     catch (err) { setNotice({ type: "error", text: errorMessage(err) }); }
-  }
-
-  async function removePermanently(item: RecurringItem) {
-    if (!window.confirm("Excluir definitivamente este fixo? Isso só é permitido se ele ainda não tiver histórico.")) return;
-    try {
-      await api.deleteRecurringItem(item.id);
-      setNotice({ type: "success", text: "Fixo excluído definitivamente." });
-      await load();
-    }
-    catch (err) { setNotice({ type: "error", text: errorMessage(err) }); }
+    finally { setConfirmBusy(false); }
   }
 
   async function changeStatus(row: RecurringOccurrence, status: TransactionStatus) {
-    if (status === "cancelled" && !window.confirm("Cancelar esta ocorrência do mês? O lançamento vinculado também será cancelado.")) return;
+    if (status === "cancelled") {
+      setConfirmAction({ kind: "cancel", occurrence: row });
+      return;
+    }
     try {
-      if (status === "cancelled") await api.cancelRecurringOccurrence(row.id);
-      else await api.setRecurringOccurrenceStatus(row.id, status);
+      await api.setRecurringOccurrenceStatus(row.id, status);
       await load();
     }
     catch (err) { setNotice({ type: "error", text: errorMessage(err) }); }
@@ -101,13 +107,14 @@ export default function Recurring({ fiscalMonth, defaultFiscalMonth, onMonthChan
         <div className="panel-title"><div><h2>Modelos cadastrados</h2><p>Alterar o valor padrão não modifica ocorrências já geradas.</p></div><label className="visibility-toggle"><input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} /> Mostrar desativados</label></div>
         {visibleItems.length ? <div className="recurring-model-list">{visibleItems.map((item) => {
           const ended = !item.active || Boolean(item.endMonth && item.endMonth < fiscalMonth);
-          return <div key={item.id} className={ended ? "inactive" : ""}><span><strong>{item.name}</strong><small>{item.type === "income" ? "Receita" : "Despesa"} · dia {item.dueDay} · desde {formatMonth(item.startMonth)}{item.endMonth ? ` até ${formatMonth(item.endMonth)}` : ""}{!item.active ? " · desativado" : ""}</small></span><strong>{formatMoney(item.defaultAmountCents)}</strong><div className="row-actions"><button className="icon-button" title="Editar modelo" onClick={() => setEditingItem(item)}><Pencil size={16} /></button><button className="ghost compact-action" disabled={ended} onClick={() => void endFromSelectedMonth(item)}><CalendarOff size={15} /> Encerrar a partir deste mês</button><button className="ghost compact-action" onClick={() => void removePermanently(item)}><Trash2 size={15} /> Excluir se não tiver histórico</button><button className="danger-button compact-action" onClick={() => setDeletingWithHistory(item)}><Trash2 size={15} /> Excluir fixo e histórico</button></div></div>;
-        })}</div> : <p className="muted">{showInactive ? "Nenhum fixo cadastrado." : "Nenhum modelo ativo cadastrado."}</p>}
+          return <div key={item.id} className={ended ? "inactive" : ""}><span><strong>{item.name}</strong><small>{item.type === "income" ? "Receita" : "Despesa"} · dia {item.dueDay} · desde {formatMonth(item.startMonth)}{item.endMonth ? ` até ${formatMonth(item.endMonth)}` : ""}{!item.active ? " · desativado" : ""}</small></span><strong>{formatMoney(item.defaultAmountCents)}</strong><div className="row-actions"><button className="icon-button" title="Editar modelo" onClick={() => setEditingItem(item)}><Pencil size={16} /></button><button className="ghost compact-action" disabled={ended} onClick={() => setConfirmAction({ kind: "end", item })}><CalendarOff size={15} /> Encerrar a partir deste mês</button><button className="ghost compact-action" onClick={() => setConfirmAction({ kind: "delete", item })}><Trash2 size={15} /> Excluir se não tiver histórico</button><button className="danger-button compact-action" onClick={() => setDeletingWithHistory(item)}><Trash2 size={15} /> Excluir fixo e histórico</button></div></div>;
+        })}</div> : <EmptyState icon={<Repeat size={24} />} title={showInactive ? "Nenhum fixo cadastrado" : "Nenhum modelo ativo"} description="Crie um fixo para projetar receitas ou contas recorrentes nos próximos meses." action={<button className="primary" onClick={() => setEditingItem("new")}><Plus size={16} /> Novo fixo</button>} />}
       </section>
     </>}
     {editingItem && <RecurringItemForm item={editingItem === "new" ? null : editingItem} defaultFiscalMonth={defaultFiscalMonth} accounts={accounts} categories={categories} onClose={() => setEditingItem(null)} onSaved={async () => { setEditingItem(null); await load(); }} />}
     {editingOccurrence && <OccurrenceForm occurrence={editingOccurrence} onClose={() => setEditingOccurrence(null)} onSaved={async () => { setEditingOccurrence(null); await load(); }} />}
     {deletingWithHistory && <DeleteRecurringHistoryModal item={deletingWithHistory} onClose={() => setDeletingWithHistory(null)} onDeleted={async () => { setDeletingWithHistory(null); setNotice({ type: "success", text: "Fixo e histórico excluídos definitivamente." }); await load(); }} />}
+    {confirmAction && <ConfirmDialog title={confirmAction.kind === "end" ? `Encerrar a partir de ${formatMonth(fiscalMonth)}?` : confirmAction.kind === "delete" ? "Excluir fixo sem histórico?" : "Cancelar ocorrência deste mês?"} description={confirmAction.kind === "end" ? "O histórico anterior será mantido e ocorrências futuras abertas serão canceladas." : confirmAction.kind === "delete" ? "Esta ação só funciona se o modelo ainda não possuir ocorrências vinculadas." : "O lançamento vinculado também será cancelado, sem alterar o modelo fixo."} confirmLabel={confirmAction.kind === "end" ? "Encerrar fixo" : confirmAction.kind === "delete" ? "Excluir fixo" : "Cancelar ocorrência"} variant={confirmAction.kind === "end" ? "warning" : "danger"} busy={confirmBusy} onConfirm={() => void confirmRecurringAction()} onCancel={() => setConfirmAction(null)} />}
   </>;
 }
 
@@ -128,7 +135,7 @@ function DeleteRecurringHistoryModal({ item, onClose, onDeleted }: { item: Recur
     catch (err) { setError(errorMessage(err)); setDeleting(false); }
   }
 
-  return <Modal title="Excluir fixo e histórico" onClose={() => { if (!deleting) onClose(); }}>
+  return <Modal title="Excluir fixo e histórico" description="Confirmação avançada para remoção permanente." icon={<AlertTriangle size={20} />} onClose={() => { if (!deleting) onClose(); }}>
     <form className="form-grid" onSubmit={submit}>
       {error && <div className="notice notice-error full">{error}</div>}
       <div className="destructive-warning full">Isso apagará o fixo, todas as ocorrências geradas e todos os lançamentos vinculados. Essa ação não pode ser desfeita.</div>
@@ -145,7 +152,7 @@ function OccurrenceSection({ title, rows, onEdit, onStatus, onOpenTransactions }
     <strong className={row.type === "income" ? "amount-income" : "amount-expense"}>{formatMoney(row.amountCents)}</strong>
     <StatusBadge status={row.status} />
     <div className="row-actions"><button className="icon-button" title="Editar valor do mês" onClick={() => onEdit(row)}><Pencil size={16} /></button>{row.status !== "paid" && <button className="icon-button success" title={row.type === "income" ? "Marcar como recebido" : "Marcar como pago"} onClick={() => void onStatus(row, "paid")}><Check size={16} /></button>}{row.status !== "open" && <button className="icon-button warning" title="Reabrir" onClick={() => void onStatus(row, "open")}><RotateCcw size={16} /></button>}{row.status !== "cancelled" && <button className="icon-button danger" title="Cancelar ocorrência" onClick={() => void onStatus(row, "cancelled")}><XCircle size={16} /></button>}<button className="icon-button" title="Abrir lançamentos" onClick={onOpenTransactions}><ExternalLink size={16} /></button></div>
-  </div>)}</div> : <p className="muted">Nenhuma ocorrência gerada para este mês.</p>}</section>;
+  </div>)}</div> : <EmptyState icon={<Repeat size={22} />} title={`Nenhum fixo em ${title.toLowerCase()}`} description="Crie um modelo para projetar valores recorrentes neste mês." />}</section>;
 }
 
 function RecurringItemForm({ item, defaultFiscalMonth, accounts, categories, onClose, onSaved }: { item: RecurringItem | null; defaultFiscalMonth: string; accounts: Account[]; categories: Category[]; onClose: () => void; onSaved: () => Promise<void> }) {
@@ -178,7 +185,7 @@ function RecurringItemForm({ item, defaultFiscalMonth, accounts, categories, onC
   }
 
   const categoryOptions = categories.filter((row) => row.type === type && (row.active || row.id === item?.categoryId));
-  return <Modal title={item ? "Editar fixo" : "Novo fixo"} onClose={onClose}><form className="form-grid" onSubmit={submit} noValidate>
+  return <Modal title={item ? "Editar fixo" : "Novo fixo"} description="Configure uma receita ou despesa que se repete mensalmente." icon={<Repeat size={20} />} onClose={onClose}><form className="form-grid" onSubmit={submit} noValidate>
     {error && <div className="notice notice-error full">{error}</div>}
     <label className="full">Nome<input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
     <label>Tipo<select value={type} onChange={(event) => { setType(event.target.value as RecurringType); setCategoryId(""); }}><option value="income">Receita</option><option value="expense">Despesa</option></select></label>
@@ -206,5 +213,5 @@ function OccurrenceForm({ occurrence, onClose, onSaved }: { occurrence: Recurrin
     try { await api.updateRecurringOccurrence(occurrence.id, cents, notes.trim() || null); await onSaved(); }
     catch (err) { setError(errorMessage(err)); } finally { setSaving(false); }
   }
-  return <Modal title={`Editar ${occurrence.recurringItem} em ${formatMonth(occurrence.fiscalMonth)}`} onClose={onClose}><form className="form-grid" onSubmit={submit}>{error && <div className="notice notice-error full">{error}</div>}<label className="full">Valor do mês (R$)<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" autoFocus /></label><label className="full">Observação do mês<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label><p className="form-hint full">Esta alteração vale apenas para este mês e não muda o valor padrão do modelo.</p><div className="form-actions full"><button type="button" className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving}>Salvar valor</button></div></form></Modal>;
+  return <Modal title={`Editar ${occurrence.recurringItem} em ${formatMonth(occurrence.fiscalMonth)}`} description="A alteração será aplicada somente à ocorrência selecionada." icon={<Pencil size={20} />} onClose={onClose}><form className="form-grid" onSubmit={submit}>{error && <div className="notice notice-error full">{error}</div>}<label className="full">Valor do mês (R$)<input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" autoFocus /></label><label className="full">Observação do mês<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} /></label><p className="form-hint full">Esta alteração vale apenas para este mês e não muda o valor padrão do modelo.</p><div className="form-actions full"><button type="button" className="ghost" onClick={onClose}>Cancelar</button><button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar valor"}</button></div></form></Modal>;
 }

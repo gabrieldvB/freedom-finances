@@ -1,4 +1,4 @@
-import { Check, Pencil, RotateCcw, Trash2, XCircle } from "lucide-react";
+import { Check, Pencil, ReceiptText, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { formatDate } from "../lib/dates";
 import { formatMoney } from "../lib/money";
 import type { Transaction } from "../types";
@@ -13,7 +13,7 @@ interface Props {
 }
 
 export function TransactionTable({ rows, compact = false, onEdit, onStatus, onDelete }: Props) {
-  if (!rows.length) return <EmptyState>Nenhum lançamento encontrado.</EmptyState>;
+  if (!rows.length) return <EmptyState icon={<ReceiptText size={22} />} title="Nenhum lançamento encontrado" description="Os lançamentos deste mês aparecerão aqui." />;
   return (
     <div className="table-wrap">
       <table>
