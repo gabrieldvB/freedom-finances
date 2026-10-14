@@ -121,8 +121,24 @@ pub struct InvoiceDto {
     pub status: String,
     pub paid_at: Option<String>,
     pub notes: Option<String>,
+    pub declared_amount_cents: i64,
+    pub declared_at: Option<String>,
+    pub declared_note: Option<String>,
+    pub transactions_total_cents: i64,
     pub total_cents: i64,
     pub transaction_count: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredInvoiceInput {
+    pub credit_card_id: i64,
+    pub fiscal_month: String,
+    pub declared_amount_cents: i64,
+    pub due_date: String,
+    pub closing_date: Option<String>,
+    pub status: String,
+    pub declared_note: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

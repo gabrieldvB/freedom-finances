@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS credit_card_invoices (
     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed','paid','cancelled')),
     paid_at TEXT,
     notes TEXT,
+    declared_amount_cents INTEGER NOT NULL DEFAULT 0,
+    declared_at TEXT,
+    declared_note TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(credit_card_id, fiscal_month)

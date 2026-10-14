@@ -5,6 +5,7 @@ import type {
   Category,
   CreditCard,
   DashboardData,
+  DeclaredInvoiceInput,
   InstallmentInput,
   Invoice,
   InvoiceStatus,
@@ -53,6 +54,17 @@ export const api = {
 
   listInvoices: (creditCardId?: number) =>
     invoke<Invoice[]>("list_invoices", { creditCardId: creditCardId ?? null }),
+  createDeclaredInvoice: (input: DeclaredInvoiceInput) =>
+    invoke<Invoice>("create_declared_invoice", { input }),
+  updateInvoiceDeclaredAmount: (
+    id: number,
+    declaredAmountCents: number,
+    declaredNote: string | null,
+  ) => invoke<Invoice>("update_invoice_declared_amount", {
+    id,
+    declaredAmountCents,
+    declaredNote,
+  }),
   getInvoice: (id: number) => invoke<Invoice>("get_invoice", { id }),
   getInvoiceTransactions: (id: number) =>
     invoke<Transaction[]>("get_invoice_transactions", { id }),

@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use tauri::State;
 
 use crate::{
-    commands::{validate_month, InvoiceDto},
+    commands::{validate_date, validate_month, DeclaredInvoiceInput, InvoiceDto},
     db::Database,
     transactions, AppState,
 };
@@ -74,8 +74,10 @@ pub fn find_or_create_invoice(
 const INVOICE_SELECT: &str = r#"
 SELECT i.id, i.credit_card_id, c.name, i.fiscal_month, i.closing_date, i.due_date,
        i.status, i.paid_at, i.notes,
-       COALESCE(SUM(CASE WHEN t.status != 'cancelled' THEN t.amount_cents ELSE 0 END), 0) AS total_cents,
-       SUM(CASE WHEN t.status != 'cancelled' THEN 1 ELSE 0 END) AS transaction_count
+       i.declared_amount_cents, i.declared_at, i.declared_note,
+       COALESCE(SUM(CASE WHEN t.status != 'cancelled' THEN t.amount_cents ELSE 0 END), 0) AS transactions_total_cents,
+       i.declared_amount_cents + COALESCE(SUM(CASE WHEN t.status != 'cancelled' THEN t.amount_cents ELSE 0 END), 0) AS total_cents,
+       COALESCE(SUM(CASE WHEN t.status != 'cancelled' THEN 1 ELSE 0 END), 0) AS transaction_count
 FROM credit_card_invoices i
 JOIN credit_cards c ON c.id=i.credit_card_id
 LEFT JOIN transactions t ON t.invoice_id=i.id
@@ -92,9 +94,142 @@ fn map_invoice(row: &Row<'_>) -> rusqlite::Result<InvoiceDto> {
         status: row.get(6)?,
         paid_at: row.get(7)?,
         notes: row.get(8)?,
-        total_cents: row.get(9)?,
-        transaction_count: row.get(10)?,
+        declared_amount_cents: row.get(9)?,
+        declared_at: row.get(10)?,
+        declared_note: row.get(11)?,
+        transactions_total_cents: row.get(12)?,
+        total_cents: row.get(13)?,
+        transaction_count: row.get(14)?,
     })
+}
+
+fn normalized_note(note: Option<String>) -> Option<String> {
+    note.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn default_closing_date(due_date: &str, closing_day: u32) -> Result<String, String> {
+    let due = NaiveDate::parse_from_str(due_date, "%Y-%m-%d").map_err(|e| e.to_string())?;
+    let same_month = date_with_day(due.year(), due.month(), closing_day);
+    let closing = if same_month <= due {
+        same_month
+    } else {
+        let (year, month) = if due.month() == 1 {
+            (due.year() - 1, 12)
+        } else {
+            (due.year(), due.month() - 1)
+        };
+        date_with_day(year, month, closing_day)
+    };
+    Ok(closing.format("%Y-%m-%d").to_string())
+}
+
+fn validate_declared_input(input: &DeclaredInvoiceInput) -> Result<(), String> {
+    validate_month(&input.fiscal_month)?;
+    validate_date(&input.due_date)?;
+    if let Some(closing_date) = input.closing_date.as_deref() {
+        validate_date(closing_date)?;
+        if closing_date > input.due_date.as_str() {
+            return Err("A data de fechamento não pode ser posterior ao vencimento.".into());
+        }
+    }
+    if input.declared_amount_cents < 0 {
+        return Err("O saldo declarado não pode ser negativo.".into());
+    }
+    if !["open", "closed", "paid"].contains(&input.status.as_str()) {
+        return Err("Status de fatura declarada inválido.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn create_declared_invoice(
+    state: State<'_, AppState>,
+    input: DeclaredInvoiceInput,
+) -> Result<InvoiceDto, String> {
+    create_declared_invoice_db(&state.db, input)
+}
+
+pub fn create_declared_invoice_db(
+    db: &Database,
+    input: DeclaredInvoiceInput,
+) -> Result<InvoiceDto, String> {
+    validate_declared_input(&input)?;
+    let mut connection = db.open().map_err(|e| e.to_string())?;
+    let transaction = connection.transaction().map_err(|e| e.to_string())?;
+    let closing_day: u32 = transaction
+        .query_row(
+            "SELECT closing_day FROM credit_cards WHERE id=?1",
+            [input.credit_card_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Cartão não encontrado.".to_string())?;
+    let closing_date = match input.closing_date.as_deref() {
+        Some(value) => value.to_string(),
+        None => default_closing_date(&input.due_date, closing_day)?,
+    };
+    let now = Local::now().to_rfc3339();
+    let note = normalized_note(input.declared_note);
+    let paid_at = (input.status == "paid").then_some(now.as_str());
+    let existing_id = transaction
+        .query_row(
+            "SELECT id FROM credit_card_invoices WHERE credit_card_id=?1 AND fiscal_month=?2",
+            (input.credit_card_id, &input.fiscal_month),
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let id = if let Some(id) = existing_id {
+        transaction.execute(
+            "UPDATE credit_card_invoices SET closing_date=?1, due_date=?2, status=?3, paid_at=?4, declared_amount_cents=?5, declared_at=?6, declared_note=?7, updated_at=CURRENT_TIMESTAMP WHERE id=?8",
+            params![closing_date, input.due_date, input.status, paid_at, input.declared_amount_cents, now, note, id],
+        ).map_err(|e| format!("Não foi possível declarar a fatura: {e}"))?;
+        id
+    } else {
+        transaction.execute(
+            "INSERT INTO credit_card_invoices(credit_card_id, fiscal_month, closing_date, due_date, status, paid_at, declared_amount_cents, declared_at, declared_note) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![input.credit_card_id, input.fiscal_month, closing_date, input.due_date, input.status, paid_at, input.declared_amount_cents, now, note],
+        ).map_err(|e| format!("Não foi possível declarar a fatura: {e}"))?;
+        transaction.last_insert_rowid()
+    };
+    if input.status == "paid" {
+        transaction.execute(
+            "UPDATE transactions SET status='paid', updated_at=CURRENT_TIMESTAMP WHERE invoice_id=?1 AND status='open'",
+            [id],
+        ).map_err(|e| e.to_string())?;
+    }
+    transaction.commit().map_err(|e| e.to_string())?;
+    get_invoice_db(&connection, id)
+}
+
+#[tauri::command]
+pub fn update_invoice_declared_amount(
+    state: State<'_, AppState>,
+    id: i64,
+    declared_amount_cents: i64,
+    declared_note: Option<String>,
+) -> Result<InvoiceDto, String> {
+    update_invoice_declared_amount_db(&state.db, id, declared_amount_cents, declared_note)
+}
+
+pub fn update_invoice_declared_amount_db(
+    db: &Database,
+    id: i64,
+    declared_amount_cents: i64,
+    declared_note: Option<String>,
+) -> Result<InvoiceDto, String> {
+    if declared_amount_cents < 0 {
+        return Err("O saldo declarado não pode ser negativo.".into());
+    }
+    let connection = db.open().map_err(|e| e.to_string())?;
+    let changed = connection.execute(
+        "UPDATE credit_card_invoices SET declared_amount_cents=?1, declared_at=?2, declared_note=?3, updated_at=CURRENT_TIMESTAMP WHERE id=?4",
+        params![declared_amount_cents, Local::now().to_rfc3339(), normalized_note(declared_note), id],
+    ).map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("Fatura não encontrada.".into());
+    }
+    get_invoice_db(&connection, id)
 }
 
 #[tauri::command]
@@ -177,6 +312,36 @@ pub fn set_invoice_status_db(db: &Database, id: i64, status: &str) -> Result<Inv
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
+
+    fn database_with_card() -> (std::path::PathBuf, Database, i64) {
+        let root =
+            std::env::temp_dir().join(format!("freedom-finances-invoice-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = Database::at(root.join("test.db")).unwrap();
+        let connection = db.open().unwrap();
+        connection.execute("INSERT INTO credit_cards(name, closing_day, due_day, limit_cents) VALUES ('Inter',20,15,500000)", []).unwrap();
+        let card_id = connection.last_insert_rowid();
+        drop(connection);
+        (root, db, card_id)
+    }
+
+    fn declared_input(
+        card_id: i64,
+        month: &str,
+        amount: i64,
+        due_date: &str,
+    ) -> DeclaredInvoiceInput {
+        DeclaredInvoiceInput {
+            credit_card_id: card_id,
+            fiscal_month: month.into(),
+            declared_amount_cents: amount,
+            due_date: due_date.into(),
+            closing_date: None,
+            status: "open".into(),
+            declared_note: Some("Saldo anterior ao uso do app".into()),
+        }
+    }
 
     #[test]
     fn calculates_invoice_dates_and_clamps_short_months() {
@@ -192,5 +357,83 @@ mod tests {
             invoice_dates("2027-12", 15, 8).unwrap(),
             ("2027-12-15".into(), "2028-01-08".into())
         );
+    }
+
+    #[test]
+    fn declared_invoice_keeps_cents_and_appears_without_transactions() {
+        let (root, db, card_id) = database_with_card();
+        let invoice = create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        assert_eq!(invoice.declared_amount_cents, 102_636);
+        assert_eq!(invoice.transactions_total_cents, 0);
+        assert_eq!(invoice.total_cents, 102_636);
+        assert_eq!(invoice.transaction_count, 0);
+        assert!(invoice.declared_at.is_some());
+        assert_eq!(
+            list_invoices_db(&db.open().unwrap(), None).unwrap().len(),
+            1
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn declared_amount_and_transactions_are_added_in_integer_cents() {
+        let (root, db, card_id) = database_with_card();
+        let invoice = create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        let connection = db.open().unwrap();
+        connection.execute(
+            "INSERT INTO transactions(description, amount_cents, type, status, transaction_date, fiscal_month, credit_card_id, invoice_id) VALUES ('Compra', 1234, 'expense', 'open', '2026-10-14', '2026-11', ?1, ?2)",
+            (card_id, invoice.id),
+        ).unwrap();
+        drop(connection);
+        let total = get_invoice_db(&db.open().unwrap(), invoice.id).unwrap();
+        assert_eq!(total.transactions_total_cents, 1_234);
+        assert_eq!(total.total_cents, 103_870);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn paying_declared_invoice_changes_its_status() {
+        let (root, db, card_id) = database_with_card();
+        let invoice = create_declared_invoice_db(
+            &db,
+            declared_input(card_id, "2026-11", 102_636, "2026-11-15"),
+        )
+        .unwrap();
+        let paid = set_invoice_status_db(&db, invoice.id, "paid").unwrap();
+        assert_eq!(paid.status, "paid");
+        assert_eq!(paid.total_cents, 102_636);
+        assert!(paid.paid_at.is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn creates_the_three_requested_open_invoices() {
+        let (root, db, card_id) = database_with_card();
+        for (month, amount, due_date) in [
+            ("2026-11", 102_636, "2026-11-15"),
+            ("2026-12", 54_586, "2026-12-15"),
+            ("2027-01", 29_087, "2027-01-15"),
+        ] {
+            create_declared_invoice_db(&db, declared_input(card_id, month, amount, due_date))
+                .unwrap();
+        }
+        let rows = list_invoices_db(&db.open().unwrap(), Some(card_id)).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows
+            .iter()
+            .all(|invoice| invoice.status == "open" && invoice.transaction_count == 0));
+        assert_eq!(
+            rows.iter().map(|invoice| invoice.total_cents).sum::<i64>(),
+            186_309
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

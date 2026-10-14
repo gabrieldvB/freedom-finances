@@ -60,8 +60,22 @@ export interface Invoice {
   status: InvoiceStatus;
   paidAt: string | null;
   notes: string | null;
+  declaredAmountCents: number;
+  declaredAt: string | null;
+  declaredNote: string | null;
+  transactionsTotalCents: number;
   totalCents: number;
   transactionCount: number;
+}
+
+export interface DeclaredInvoiceInput {
+  creditCardId: number;
+  fiscalMonth: string;
+  declaredAmountCents: number;
+  dueDate: string;
+  closingDate: string | null;
+  status: Exclude<InvoiceStatus, "cancelled">;
+  declaredNote: string | null;
 }
 
 export interface CategoryTotal {

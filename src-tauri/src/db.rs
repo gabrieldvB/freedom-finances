@@ -33,6 +33,7 @@ impl Database {
         connection
             .execute_batch(SCHEMA)
             .map_err(|e| format!("Erro ao criar schema: {e}"))?;
+        migrate(&connection).map_err(|e| format!("Erro ao atualizar banco: {e}"))?;
         seed(&connection).map_err(|e| format!("Erro ao criar dados iniciais: {e}"))?;
         Ok(database)
     }
@@ -46,6 +47,7 @@ impl Database {
         connection
             .execute_batch(SCHEMA)
             .map_err(|e| e.to_string())?;
+        migrate(&connection).map_err(|e| e.to_string())?;
         seed(&connection).map_err(|e| e.to_string())?;
         Ok(database)
     }
@@ -67,6 +69,39 @@ impl Database {
     pub fn backup_dir(&self) -> &Path {
         &self.backup_dir
     }
+}
+
+fn has_column(connection: &Connection, table: &str, column: &str) -> SqlResult<bool> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for current in columns {
+        if current? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn migrate(connection: &Connection) -> SqlResult<()> {
+    if !has_column(connection, "credit_card_invoices", "declared_amount_cents")? {
+        connection.execute(
+            "ALTER TABLE credit_card_invoices ADD COLUMN declared_amount_cents INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !has_column(connection, "credit_card_invoices", "declared_at")? {
+        connection.execute(
+            "ALTER TABLE credit_card_invoices ADD COLUMN declared_at TEXT",
+            [],
+        )?;
+    }
+    if !has_column(connection, "credit_card_invoices", "declared_note")? {
+        connection.execute(
+            "ALTER TABLE credit_card_invoices ADD COLUMN declared_note TEXT",
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 fn seed(connection: &Connection) -> SqlResult<()> {
@@ -98,4 +133,64 @@ fn seed(connection: &Connection) -> SqlResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn migrates_legacy_invoice_table_without_losing_data_and_is_idempotent() {
+        let root =
+            std::env::temp_dir().join(format!("freedom-finances-migration-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("legacy.db");
+        let legacy = Connection::open(&path).unwrap();
+        legacy.execute_batch(
+            r#"
+            CREATE TABLE credit_cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                closing_day INTEGER NOT NULL,
+                due_day INTEGER NOT NULL,
+                limit_cents INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE credit_card_invoices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                credit_card_id INTEGER NOT NULL REFERENCES credit_cards(id),
+                fiscal_month TEXT NOT NULL,
+                closing_date TEXT NOT NULL,
+                due_date TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                paid_at TEXT,
+                notes TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(credit_card_id, fiscal_month)
+            );
+            INSERT INTO credit_cards(id, name, closing_day, due_day) VALUES (1, 'Legado', 20, 15);
+            INSERT INTO credit_card_invoices(id, credit_card_id, fiscal_month, closing_date, due_date, notes)
+            VALUES (7, 1, '2026-11', '2026-10-20', '2026-11-15', 'preservar');
+            "#,
+        ).unwrap();
+        drop(legacy);
+
+        let db = Database::at(path).unwrap();
+        let connection = db.open().unwrap();
+        migrate(&connection).unwrap();
+        let row: (i64, String, i64, Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT id, notes, declared_amount_cents, declared_at, declared_note FROM credit_card_invoices WHERE id=7",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (7, "preservar".into(), 0, None, None));
+        drop(connection);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -8,6 +8,7 @@ Aplicativo desktop local e offline para finanças pessoais. A interface é React
 - CRUD de lançamentos, alteração de status e filtros por mês/status.
 - CRUD e ativação/desativação de categorias, cartões e contas.
 - Faturas mensais criadas automaticamente para lançamentos no cartão.
+- Declaração manual de faturas preexistentes, mesmo sem lançamentos cadastrados.
 - Compra parcelada com divisão exata dos centavos e faturas futuras.
 - Fechar, pagar, reabrir e cancelar fatura.
 - Pagamento de fatura marca seus lançamentos abertos como pagos.
@@ -91,7 +92,15 @@ vencimento = mês seguinte + dia de vencimento
 status inicial = open
 ```
 
-Dias que não existem no mês são ajustados para o último dia válido. O total da fatura nunca é duplicado em uma coluna: ele é calculado a partir das transações vinculadas, ignorando lançamentos cancelados.
+Dias que não existem no mês são ajustados para o último dia válido. O total da fatura é calculado exclusivamente em centavos inteiros:
+
+```text
+total = saldo declarado + lançamentos vinculados não cancelados
+```
+
+O saldo declarado permite registrar uma fatura que já existia antes do início do uso do app. Na tela **Cartões e faturas**, use **Declarar fatura em aberto** e informe cartão, mês fiscal, valor, vencimento, fechamento opcional, status e observação. Se a fatura do mesmo cartão e mês já existir, a declaração a atualiza sem apagar seus lançamentos.
+
+Bancos criados por versões anteriores recebem as colunas de declaração por uma migração aditiva e idempotente durante a inicialização.
 
 Uma compra de `10000` centavos em três parcelas gera:
 
@@ -120,7 +129,7 @@ npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Os testes Rust cobrem datas de fatura, virada de ano, divisão de centavos e um fluxo integrado: compra em 3x, criação de três faturas, pagamento em cascata e backup íntegro.
+Os testes Rust cobrem datas de fatura, virada de ano, divisão de centavos, migração de banco antigo, faturas declaradas sem lançamentos, soma entre saldo declarado e lançamentos, dashboard/projeção, pagamento e o fluxo integrado de compra em 3x com backup íntegro.
 
 ## Estrutura
 

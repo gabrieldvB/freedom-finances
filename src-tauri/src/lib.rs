@@ -45,6 +45,8 @@ pub fn run() {
             invoices::list_invoices,
             invoices::get_invoice,
             invoices::get_invoice_transactions,
+            invoices::create_declared_invoice,
+            invoices::update_invoice_declared_amount,
             invoices::set_invoice_status,
             backup::get_app_paths,
             backup::create_backup,
